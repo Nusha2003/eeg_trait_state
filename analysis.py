@@ -80,6 +80,7 @@ Z_joint = lda_cv_projection(Xz, joint_labels, labels.subject)
 Trait coherence: within subject distance/between subject distance
 smaller value = more clustered by subject
 """
+
 #change to balanced trait coherence
 def balanced_trait_coherence(Z, subjects, min_pairs=100):
     scores = []
@@ -283,7 +284,7 @@ hierarchy_results = {name: calculate_hierarchy_metric(sp, labels) for name, sp i
 for space, score in hierarchy_results.items():
     print(f"Hierarchy Metric in {space}: {score:.4f}")
 
-
+"""
 import matplotlib.pyplot as plt
 
 # We use a subset of points (e.g., 500) to keep the plot readable
@@ -298,6 +299,69 @@ plt.xlabel("Distance in PCA (Trait-Dominant)")
 plt.ylabel("Distance in State-LDA (Task-Optimized)")
 plt.tight_layout()
 plt.savefig("geometry_preservation_scatter.png")
+"""
 
+def calculate_state_vector_alignment(Zspace, labels, state_list=None):
 
+    if state_list is None:
+        # Default to comparing a baseline to all 'real' task states
+        baseline = "baseline_eyes_open"
+        comparison_states = [s for s in labels.condition.unique() if "real" in s]
+    else:
+        baseline = state_list[0]
+        comparison_states = state_list[1:]
 
+    all_pair_similarities = []
+
+    for target_state in comparison_states:
+        subject_vectors = []
+        
+        for s in labels.subject.unique():
+            # Get masks for the specific subject and condition pair
+            idx_a = (labels.subject == s) & (labels.condition == baseline)
+            idx_b = (labels.subject == s) & (labels.condition == target_state)
+
+            if idx_a.sum() > 5 and idx_b.sum() > 5:
+                # Calculate the 'State Vector' (the displacement on the manifold)
+                vec = Zspace[idx_b].mean(axis=0) - Zspace[idx_a].mean(axis=0)
+                
+                # Normalize to unit length for Cosine Similarity
+                norm = np.linalg.norm(vec)
+                if norm > 1e-6:
+                    subject_vectors.append(vec / norm)
+
+        if len(subject_vectors) >= 2:
+            V = np.array(subject_vectors)
+            # Dot product of normalized vectors = Cosine Similarity
+            sim_matrix = V @ V.T
+            # Take mean of upper triangle (similarities between different subjects)
+            upper_idx = np.triu_indices(len(sim_matrix), k=1)
+            all_pair_similarities.append(sim_matrix[upper_idx].mean())
+
+    return np.mean(all_pair_similarities) if all_pair_similarities else 0.0
+
+# --- Execution across the Representation Spaces ---
+
+# Your specific task labels
+states_to_compare = [
+    "baseline_eyes_open",
+    "task1_real_left_fist",
+    "task1_real_right_fist",
+    "task3_real_both_fists",
+    "task3_real_both_feet"
+]
+
+print("\n=== Geometric Parallelism (State Vector Alignment) ===")
+print("Measures if the 'direction' of a task is consistent across subjects.")
+print("-" * 55)
+
+spaces = {
+    "PCA (Euclidean)": Z,
+    "Trait-LDA": Z_trait,
+    "State-LDA": Z_state,
+    "Joint-LDA": Z_joint
+}
+
+for name, space in spaces.items():
+    score = calculate_state_vector_alignment(space, labels, states_to_compare)
+    print(f"{name:<20} : {score:.4f}")
