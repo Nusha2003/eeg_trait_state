@@ -1,20 +1,16 @@
 import numpy as np
 import pandas as pd
+import joblib
+import argparse
+import os
 from sklearn.svm import LinearSVC
-from sklearn.model_selection import StratifiedKFold, cross_val_score, LeaveOneGroupOut
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.pipeline import Pipeline
-import joblib
-
-"""
-trait still survives state supervision
-even when the model is trained to ignore subject - samples from the same person remain closer together
-even when optimized for task, the model cannot destroy subject odentity
-"""
-
-# Assuming your perform_pca and lda_full_projection functions exist
+from sklearn.metrics import balanced_accuracy_score, f1_score, accuracy_score
 from pca_embed import perform_pca
+from sklearn.utils.multiclass import unique_labels
+
 
 def lda_full_projection(X, y, max_components=10):
     n_classes = len(np.unique(y))
@@ -22,76 +18,88 @@ def lda_full_projection(X, y, max_components=10):
     lda = LinearDiscriminantAnalysis(n_components=k, solver="svd")
     return lda.fit_transform(X, y)
 
-def run_safe_decoding(X, y, groups=None, mode='trait'):
-    n_classes = len(np.unique(y))
-    n_features = X.shape[1]  # Get the actual width of the current space
+def run_stress_decoding(X, y, train_idx, test_idx):
+    X_train, y_train = X[train_idx], y[train_idx]
+    X_test, y_test   = X[test_idx], y[test_idx]
+
+    all_labels = np.unique(y)
+    n_classes_train = len(np.unique(y_train))
+    n_features = X.shape[1]
     
-    # NEW LOGIC: components must be < n_classes AND <= n_features
-    # We use n_features if it's smaller than our target of 10
-    n_comp = min(10, n_classes - 1, n_features) 
+    # we take the minimum of 10, the features, or (classes - 1)
+    n_comp = min(10, n_features, n_classes_train - 1) 
     
-    # If the space is already very small (like State-LDA), 
-    # we might not even need an extra LDA in the pipeline.
-    # But for consistency, we'll keep it and just use the smaller n_comp.
-    
+    if n_comp < 1:
+        n_comp = None 
+        
     pipe = Pipeline([
         ('scaler', StandardScaler()),
         ('lda', LinearDiscriminantAnalysis(n_components=n_comp)),
         ('clf', LinearSVC(dual=False, max_iter=2000, random_state=42))
     ])
 
-    if mode == 'trait':
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-        scores = cross_val_score(pipe, X, y, cv=cv, n_jobs=-1)
-    elif mode == 'state_logo':
-        cv = LeaveOneGroupOut()
-        scores = cross_val_score(pipe, X, y, cv=cv, groups=groups, n_jobs=-1)
-        
-    return np.mean(scores), np.std(scores)
+    pipe.fit(X_train, y_train)
+    y_pred = pipe.predict(X_test)
 
-if __name__ == "__main__":
-    print("Loading data and generating representation spaces...")
-    Z_pca, Xz, labels, scaler, pca = perform_pca()
+    return {
+        'Acc': accuracy_score(y_test, y_pred),
+        'Bal_Acc': balanced_accuracy_score(y_test, y_pred),
+        'F1_Macro': f1_score(y_test, y_pred, labels=all_labels, average='macro', zero_division=0)
 
-    # 1. Create the specialized spaces
-    print("Projecting into Trait, State, and Joint spaces...")
-    Z_trait = lda_full_projection(Xz, labels.subject, max_components=10)
-    Z_state = lda_full_projection(Xz, labels.condition, max_components=3)
-    
-    joint_labels = labels.subject + "_" + labels.condition
-    Z_joint = lda_full_projection(Xz, joint_labels, max_components=10)
-
-    spaces = {
-        'PCA (Unsupervised)': Z_pca,
-        'Trait-LDA (Identity-Optimized)': Z_trait,
-        'State-LDA (Task-Optimized)': Z_state,
-        'Joint-LDA (Combined)': Z_joint
     }
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--subjects", type=str, required=True, choices=['4', '10', '20', '109'])
+    args = parser.parse_args()
 
-    all_results = {}
-    le = LabelEncoder()
-    y_trait = le.fit_transform(labels.subject)
+    split_dir = "splits"
+    if args.subjects == '10':
+        split_files = [f for f in os.listdir(split_dir) if f.startswith(f"splits_n{args.subjects}_rep")]
+    else:
+        split_files = [f"splits_n{args.subjects}.pkl"]
 
-    # 2. Iterate through every space to test Trait and State access
-    for space_name, X_space in spaces.items():
-        print(f"\n--- Testing Space: {space_name} ---")
-        
-        # Test Trait (Subject ID)
-        t_acc, t_std = run_safe_decoding(X_space, y_trait, mode='trait')
-        
-        # Test State (Task Condition) via Cross-Subject LOGO
-        s_acc, s_std = run_safe_decoding(X_space, labels.condition, groups=labels.subject, mode='state_logo')
-        
-        all_results[space_name] = {
-            'Trait_Acc': t_acc,
-            'Trait_Std': t_std,
-            'State_Acc': s_acc,
-            'State_Std': s_std
-        }
-        
-        print(f"  Trait Accuracy: {t_acc:.4f}")
-        print(f"  State Accuracy (LOGO): {s_acc:.4f}")
+    all_space_results = []
 
-    # 3. Final Comparison: Save results
-    joblib.dump(all_results, "full_space_stress_test.pkl")
-    print("\nAll results saved to full_space_stress_test.pkl")
+    for s_file in split_files:
+        print(f"Processing split file: {s_file}")
+        data = joblib.load(os.path.join(split_dir, s_file))
+        metadata = data['metadata']
+        splits = data['splits']
+
+        _, Xz_full, _, _, _ = perform_pca() 
+        Xz = Xz_full[metadata.index] 
+
+        #create representation spaces
+        Z_trait = lda_full_projection(Xz, metadata.subject, max_components=10)
+        Z_state = lda_full_projection(Xz, metadata.condition, max_components=10)
+        joint_labels = metadata.subject + "_" + metadata.condition
+        Z_joint = lda_full_projection(Xz, joint_labels, max_components=10)
+        
+        spaces = {'Raw': Xz, 'Trait_LDA': Z_trait, 'State_LDA': Z_state, 'Joint_LDA': Z_joint}
+
+        for space_name, X_space in spaces.items():
+            for split in splits:
+                # within test
+                w_metrics = run_stress_decoding(X_space, metadata.condition, 
+                                                split['within']['train'], split['within']['test'])
+                # between test
+                b_metrics = run_stress_decoding(X_space, metadata.condition, 
+                                                split['between']['train'], split['between']['test'])
+                
+                all_space_results.append({
+                    'space': space_name,
+                    'split_file': s_file,
+                    'subject': split['subject'],
+                    'within_bal_acc': w_metrics['Bal_Acc'],
+                    'within_f1': w_metrics['F1_Macro'],
+                    'between_bal_acc': b_metrics['Bal_Acc'],
+                    'between_f1': b_metrics['F1_Macro']
+                })
+
+    # aggregation of final results
+    results_df = pd.DataFrame(all_space_results)
+    final_summary = results_df.groupby('space')[['within_bal_acc', 'between_bal_acc', 'within_f1', 'between_f1']].mean()
+    
+    print("\n--- Final Aggregated Results ---")
+    print(final_summary)
+    final_summary.to_csv(f"stress_results_n{args.subjects}_final.csv")
