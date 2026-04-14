@@ -1,0 +1,42 @@
+
+dataset: gamma
+feature: psd
+data:
+
+  motor:
+    6split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/motor_imagery/splits_6classes"
+    10split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/motor_imagery/splits_10classes"
+    feature_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_psd_data.csv"
+    labels_6_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_psd_labels_state6.csv"
+    labels_10_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_psd_labels.csv"
+    save_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/results/motor"
+    complexity: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_complexity_data.csv"
+    entropy: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_entropy_data.csv"
+
+  lemon:
+    split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/lemon"
+    psd: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lemon/lemon_psd_features.csv"
+    entropy: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lemon/lemon_entropy_features.csv"
+    complexity: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lemon/lemon_complexity_features.csv"
+    labels_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lemon/lemon_labels.csv"
+    save_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/results/lemon"
+
+  lee:
+    split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/lee"
+    psd: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lee/motor_psd_data.csv"
+    entropy: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lee/motor_entropy_data.csv"
+    labels_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lee/motor_psd_labels.csv"
+    complexity: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lee/motor_complexity_data.csv"
+    save_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/results/lee"
+  
+  gamma:
+    split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/gamma"
+    psd: "/home1/amadapur/projects/eeg_trait_state_geometry/data/gamma/gamma_psd_data.csv"
+    entropy: "/home1/amadapur/projects/eeg_trait_state_geometry/data/gamma/gamma_entropy_data.csv"
+    complexity: "/home1/amadapur/projects/eeg_trait_state_geometry/data/gamma/gamma_complexity_data.csv"
+    labels_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/gamma/gamma_psd_labels.csv"
+    save_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/results/gamma"
+
+
+experiment:
+  spaces: ["Raw", "Trait_LDA", "State_LDA", "Joint_LDA"]

@@ -104,7 +104,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--subjects", type=str, required=True, choices=['4', '10', '20', '109'])
     parser.add_argument("--num_classes", type=str, required=True, choices=['6', '10'])
+    parser.add_argument("--feature", type=str, required=True, choices=['psd', 'entropy', 'complexity'])
     args = parser.parse_args()
+    out_dir = os.path.join()
 
     split_dir = f"splits_{args.num_classes}classes"
     if args.subjects in ['4', '10', '20']:

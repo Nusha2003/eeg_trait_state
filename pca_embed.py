@@ -7,9 +7,9 @@ import seaborn as sns
 from mpl_toolkits.mplot3d import Axes3D
 import os
 
-def perform_pca():
-    X = pd.read_csv("/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery_balanced_features.csv").values
-    labels = pd.read_csv("/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery_balanced_labels.csv")
+def perform_pca(data, labels):
+    X = pd.read_csv("/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_psd_data.csv").values
+    labels = pd.read_csv("/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_psd_labels_state6.csv")
     scaler = StandardScaler()
     Xz = scaler.fit_transform(X)
     pca = PCA(n_components=10)

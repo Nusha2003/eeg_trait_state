@@ -63,8 +63,8 @@ if __name__ == "__main__":
     os.makedirs(hier_path, exist_ok=True)
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--subjects", type=str, required=True, choices=['4', '10', '20', 'all'])
-    parser.add_argument("--num_classes", type=str, required=True, choices=['2','6', '10'])
+    parser.add_argument("--subjects", type=str, required=True, choices=['4', '7', '10','14','20', 'all'])
+    parser.add_argument("--num_classes", type=str, required=True, choices=['2', '4','6', '10'])
     args = parser.parse_args()
 
     if dataset == "motor":
@@ -74,8 +74,10 @@ if __name__ == "__main__":
             split_dir = data_cfg["10split_dir"]
     else:
         split_dir = data_cfg["split_dir"]
-    if args.subjects in ['4', '10', '20']:
+    if args.subjects in ['4', '7', '10', '20']:
         split_files = sorted([f for f in os.listdir(split_dir) if f.startswith(f"splits_n{args.subjects}_rep")])
+    elif args.subjects == '14':
+        split_files = [f"splits_n14.pkl"]
     else:
         split_files = [f"splits_{args.subjects}.pkl"]
 
