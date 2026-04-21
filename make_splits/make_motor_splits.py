@@ -1,28 +1,24 @@
-"""
-within-subject (state decoding): use current splits (train, test)
-between-subject (state decoding): all other subjects' train + held-out subject test
-trait decoding: use existing train and test splits
-
-Uses fixed subject-size settings:
-- 4, 8, 10, "all"
-"""
-
 import pandas as pd
 import numpy as np
 import joblib
 import argparse
 import os
 
+IGNORED_IDS = [88, 90, 92, 100]
+IGNORED_STRS = [f"S{i:03d}" for i in IGNORED_IDS]
+IGNORED_SUBJECTS = IGNORED_IDS + IGNORED_STRS
+
 
 def make_splits(labels_path, n_subjects="all", seed=42):
     labels_df = pd.read_csv(labels_path)
-    rng = np.random.default_rng(seed)
+    labels_df = labels_df[~labels_df["subject"].isin(IGNORED_SUBJECTS)].reset_index(drop=True)
 
+    rng = np.random.default_rng(seed)
     all_subs = labels_df["subject"].unique()
     n_available = len(all_subs)
 
     if n_available < 4:
-        raise ValueError(f"Dataset must contain at least 4 subjects, found {n_available}.")
+        raise ValueError(f"Need at least 4 usable subjects, found {n_available}.")
 
     if n_subjects == "all":
         selected_subs = all_subs
@@ -31,41 +27,34 @@ def make_splits(labels_path, n_subjects="all", seed=42):
             raise ValueError(f"n_subjects must be at least 4, got {n_subjects}.")
         if n_subjects > n_available:
             raise ValueError(
-                f"Requested n_subjects={n_subjects}, but only {n_available} subjects are available."
+                f"Requested n_subjects={n_subjects}, but only {n_available} usable subjects are available."
             )
-        selected_subs = rng.choice(
-            all_subs,
-            size=n_subjects,
-            replace=False
-        )
+        selected_subs = rng.choice(all_subs, size=n_subjects, replace=False)
 
     df = labels_df[labels_df["subject"].isin(selected_subs)].reset_index(drop=True)
     split_results = []
 
-    # trait decoding
-    trait_train = df[df["original_part"] == "train"].index.tolist()
-    trait_test = df[df["original_part"] == "test"].index.tolist()
+    trait_train = df[df["run"].between(1, 10)].index.tolist()
+    trait_test = df[df["run"].between(11, 14)].index.tolist()
 
     for target_sub in selected_subs:
         subj_mask = df["subject"] == target_sub
 
-        # within-subject state decoding
-        within_train = df[
-            subj_mask & (df["original_part"] == "train")
-        ].index.tolist()
+        b_indices = df[subj_mask & df["run"].isin([1, 2])].index.tolist()
+        mid = len(b_indices) // 2
 
-        within_test = df[
-            subj_mask & (df["original_part"] == "test")
-        ].index.tolist()
+        within_train = (
+            b_indices[:mid] +
+            df[subj_mask & df["run"].between(3, 10)].index.tolist()
+        )
 
-        # between-subject state decoding
-        between_train = df[
-            (~subj_mask) & (df["original_part"] == "train")
-        ].index.tolist()
+        within_test = (
+            b_indices[mid:] +
+            df[subj_mask & df["run"].between(11, 14)].index.tolist()
+        )
 
-        between_test = df[
-            subj_mask & (df["original_part"] == "test")
-        ].index.tolist()
+        between_train = df[~subj_mask].index.tolist()
+        between_test = df[subj_mask & df["run"].between(11, 14)].index.tolist()
 
         split_results.append({
             "subject": target_sub,
@@ -83,7 +72,7 @@ def make_splits(labels_path, n_subjects="all", seed=42):
 
 
 def get_subject_sizes(total_available):
-    fixed_sizes = [4, 8, 10]
+    fixed_sizes = [4, 10, 20, 40, 80]
     sizes = [x for x in fixed_sizes if x <= total_available]
     sizes.append("all")
     return sizes
@@ -94,18 +83,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--labels",
         type=str,
-        default="/home1/amadapur/projects/eeg_trait_state_geometry/data/gamma/gamma_psd_labels.csv"
+        default="/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_psd_labels_state6.csv"
     )
     parser.add_argument(
         "--out_dir",
         type=str,
-        default="/home1/amadapur/projects/eeg_trait_state_geometry/splits/gamma"
+        default="/home1/amadapur/projects/eeg_trait_state_geometry/splits/motor_imagery/splits_6classes"
     )
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
 
     labels_df = pd.read_csv(args.labels)
+    labels_df = labels_df[~labels_df["subject"].isin(IGNORED_SUBJECTS)].reset_index(drop=True)
     total_available = labels_df["subject"].nunique()
 
     sizes = get_subject_sizes(total_available)
@@ -116,7 +106,6 @@ if __name__ == "__main__":
 
         for i in range(iterations):
             seed = 42 + i
-
             splits, trait_split, metadata = make_splits(
                 args.labels,
                 n_subjects=size,

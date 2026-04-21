@@ -3,3 +3,7 @@ data/
 logs/
 __pycache__/
 *.pkl
+results/
+figures/
+plots/
+logs/

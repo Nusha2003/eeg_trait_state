@@ -1,7 +1,7 @@
-,subject,subject,trait_ident_acc,trait_ident_acc,within_state_acc,within_state_acc,between_acc,between_acc,trait_ident_f1,trait_ident_f1,within_state_f1,within_state_f1,between_f1,between_f1
-,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std
-space,,,,,,,,,,,,,,
-Joint_LDA,27.5,,0.0,,0.532962962962963,,0.5076851851851851,,0.0,,0.4956408059471651,,0.4492082187623031,
-Raw,27.5,,0.0,,0.5752777777777778,,0.56,,0.0,,0.541695781346554,,0.5286168232307522,
-State_LDA,27.5,,0.0,,0.553425925925926,,0.5553703703703704,,0.0,,0.5338463755624058,,0.5290425973832035,
-Trait_LDA,27.5,,0.0,,0.5247222222222222,,0.5109259259259259,,0.0,,0.4850580525631172,,0.44272000804337636,
+,,subject,subject,trait_ident_acc,trait_ident_acc,within_state_acc,within_state_acc,between_acc,between_acc,trait_ident_f1,trait_ident_f1,within_state_f1,within_state_f1,between_f1,between_f1
+,,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std
+num_subjects,space,,,,,,,,,,,,,,
+all,Joint_LDA,27.5,,0.0,,0.532962962962963,,0.5076851851851851,,0.0,,0.4956408059471651,,0.4492082187623031,
+all,Raw,27.5,,0.0,,0.5752777777777778,,0.56,,0.0,,0.541695781346554,,0.5286168232307522,
+all,State_LDA,27.5,,0.0,,0.553425925925926,,0.5553703703703704,,0.0,,0.5338463755624058,,0.5290425973832035,
+all,Trait_LDA,27.5,,0.0,,0.5247222222222222,,0.5109259259259259,,0.0,,0.4850580525631172,,0.44272000804337636,

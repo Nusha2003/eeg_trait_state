@@ -1,19 +1,24 @@
 
-dataset: gamma
-feature: psd
+dataset: motor
+feature: entropy
 data:
 
   motor:
+
+    classes: 6 
+    subjects: [4, 10, 20, 40, 80, None]
     6split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/motor_imagery/splits_6classes"
-    10split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/motor_imagery/splits_10classes"
-    feature_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_psd_data.csv"
-    labels_6_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_psd_labels_state6.csv"
-    labels_10_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_psd_labels.csv"
-    save_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/results/motor"
+    10split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/motor_imagery/splits_10classes/all"
+    psd: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_psd_data.csv"
+    labels_6_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_psd_labels_state6.csv"
+    labels_10_path: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_psd_labels.csv"
+    save_dir_6: "/home1/amadapur/projects/eeg_trait_state_geometry/results/motor/6_classes"
+    save_dir_10: "/home1/amadapur/projects/eeg_trait_state_geometry/results/motor/10_classes"
     complexity: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_complexity_data.csv"
     entropy: "/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_entropy_data.csv"
 
   lemon:
+    classes: 2
     split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/lemon"
     psd: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lemon/lemon_psd_features.csv"
     entropy: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lemon/lemon_entropy_features.csv"
@@ -22,6 +27,8 @@ data:
     save_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/results/lemon"
 
   lee:
+    subjects: [4, 10, 20, 40, None]
+    classes: 2
     split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/lee"
     psd: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lee/motor_psd_data.csv"
     entropy: "/home1/amadapur/projects/eeg_trait_state_geometry/data/lee/motor_entropy_data.csv"
@@ -30,6 +37,8 @@ data:
     save_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/results/lee"
   
   gamma:
+    subjects: [4, 8, 10, None]
+    classes: 4
     split_dir: "/home1/amadapur/projects/eeg_trait_state_geometry/splits/gamma"
     psd: "/home1/amadapur/projects/eeg_trait_state_geometry/data/gamma/gamma_psd_data.csv"
     entropy: "/home1/amadapur/projects/eeg_trait_state_geometry/data/gamma/gamma_entropy_data.csv"
