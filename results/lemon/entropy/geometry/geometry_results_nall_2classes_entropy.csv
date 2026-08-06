@@ -1,7 +1,0 @@
-,trait_ident_acc,trait_ident_acc,within_state_acc,within_state_acc,between_acc,between_acc,trait_ident_f1,trait_ident_f1,within_state_f1,within_state_f1,between_f1,between_f1
-,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std
-space,,,,,,,,,,,,
-Joint_LDA,0.0,,0.9549484904582836,,0.6958824838572705,,0.0,,0.9541705077768614,,0.6404544533679228,
-Raw,0.0,,0.9586900994395947,,0.7008162814968707,,0.0,,0.9581927804636521,,0.6462753843354608,
-State_LDA,0.0,,0.831334393988683,,0.7210545734883506,,0.0,,0.8223024752899968,,0.675648983451725,
-Trait_LDA,0.0,,0.9379135954089345,,0.5844258458027392,,0.0,,0.9371176632782423,,0.5126164844347119,

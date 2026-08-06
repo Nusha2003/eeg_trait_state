@@ -102,24 +102,37 @@ if __name__ == "__main__":
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--subjects", type=str, required=True, choices=['4', '10', '20', '109'])
     parser.add_argument("--num_classes", type=str, required=True, choices=['6', '10'])
     parser.add_argument("--feature", type=str, required=True, choices=['psd', 'entropy', 'complexity'])
     args = parser.parse_args()
     out_dir = os.path.join()
 
     split_dir = f"splits_{args.num_classes}classes"
-    if args.subjects in ['4', '10', '20']:
-        split_files = sorted([
-            f for f in os.listdir(split_dir)
-            if f.startswith(f"splits_n{args.subjects}_rep")
-        ])
-    else:
-        split_files = [f"splits_n{args.subjects}.pkl"]
+
+    subject_list = config['motor']['subjects']
 
     all_space_results = []
     hierarchy_results = []
-    for s_file in split_files:
+
+    for subj in subject_list:
+
+        if subj is None:
+            subj_str = '109'   # all subjects
+        else:
+            subj_str = str(subj)
+
+        if subj_str in ['4', '40', '80']:
+            split_files = sorted([
+                f for f in os.listdir(split_dir)
+                if f.startswith(f"splits_n{subj_str}_rep")
+            ])
+        else:
+            split_files = [f"splits_n{subj_str}.pkl"]
+
+        for s_file in split_files:
+            print(f"Processing split file: {s_file}")
+
+        data = joblib.load(os.path.join(split_dir, s_file))
         print(f"Processing split file: {s_file}")
         data = joblib.load(os.path.join(split_dir, s_file))
         metadata = data['metadata']
@@ -132,6 +145,7 @@ if __name__ == "__main__":
 
         metadata.columns = metadata.columns.str.lower().str.strip()
         X = pd.read_csv(config['data']['feature_path']).values
+        subject_list = config['motor']['subjects']
         if args.num_classes == '6':
             y = pd.read_csv(config['data']['labels_6_path']).values
         else:
@@ -252,7 +266,7 @@ if __name__ == "__main__":
     print(final_summary)
     print("\n--- Hierarchy Results (Mean ± Std across seeds) ---")
     print(hier_final_summary)       
-    final_summary.to_csv(f"geometry_results_n{args.subjects}_{args.num_classes}classes.csv")
+    final_summary.to_csv(f"geometry_results_n{subj_str}_{args.num_classes}classes.csv")
     hier_final_summary.to_csv(
-    f"hierarchy_results_n{args.subjects}_{args.num_classes}classes.csv"
+    f"hierarchy_results_n{subj_str}_{args.num_classes}classes.csv"
 )

@@ -16,6 +16,7 @@ import os
 
 def make_splits(labels_path, n_subjects="all", seed=42):
     labels_df = pd.read_csv(labels_path)
+    labels_df["original_index"] = np.arange(len(labels_df))
     rng = np.random.default_rng(seed)
 
     all_subs = labels_df["subject"].unique()

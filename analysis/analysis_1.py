@@ -34,7 +34,7 @@ def infer_dataset_feature(path):
     dataset = "unknown_dataset"
     feature = "unknown_feature"
 
-    known_datasets = {"motor", "lee", "lemon", "gamma"}
+    known_datasets = {"motor", "lee", "lemon", "gamma", "bci"}
     known_features = {"psd", "entropy", "complexity"}
 
     for p in parts:
@@ -89,8 +89,10 @@ def load_hierarchy_csv(csv_path):
     except Exception as e:
         print(f"Skipping {csv_path}: failed to read with 2-row header: {e}")
         return None
-
     df = flatten_multilevel_columns(df)
+    df["space"] = df["space"].replace({
+        "Raw": "Unsupervised"
+    })
 
     rename_map = {
         "hier_ratio_mean": "mean_hierarchy",
@@ -194,6 +196,7 @@ def add_subject_order_info(df):
         "lee": 54,
         "lemon": 156,
         "gamma": 14,
+        "bci": 14
     }
 
     def map_plot_value(row):
@@ -256,7 +259,7 @@ def save_tables(raw_df, summary_df, out_dir, dataset):
 
 
 def get_space_order(values):
-    preferred = ["Raw", "Trait_LDA", "State_LDA", "Joint_LDA"]
+    preferred = ["Unsupervised", "Trait_LDA", "State_LDA", "Joint_LDA"]
     existing = [v for v in preferred if v in values]
     remaining = [v for v in sorted(values) if v not in existing]
     return existing + remaining
@@ -434,7 +437,7 @@ def plot_inter_intra_bars_per_feature(summary_df, dataset, feature, out_dir, num
 
     sub = sub.sort_values(["space", "n_subjects_plot"])
 
-    space_order = ["Raw", "Trait_LDA", "State_LDA", "Joint_LDA"]
+    space_order = ["Unsupervised", "Trait_LDA", "State_LDA", "Joint_LDA"]
     existing_spaces = [s for s in space_order if s in sub["space"].unique()]
     remaining_spaces = [s for s in sorted(sub["space"].unique()) if s not in existing_spaces]
     spaces = existing_spaces + remaining_spaces
@@ -524,7 +527,7 @@ def plot_inter_intra_bars_per_feature(summary_df, dataset, feature, out_dir, num
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--results_dir", type=str, required=True)
-    parser.add_argument("--dataset", type=str, required=True, choices=["motor", "lee", "lemon", "gamma"])
+    parser.add_argument("--dataset", type=str, required=True, choices=["motor", "lee", "lemon", "gamma", "bci"])
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--plot_feature_level", action="store_true")
     parser.add_argument("--plot_inter_intra", action="store_true")

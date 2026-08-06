@@ -11,6 +11,7 @@ IGNORED_SUBJECTS = IGNORED_IDS + IGNORED_STRS
 
 def make_splits(labels_path, n_subjects="all", seed=42):
     labels_df = pd.read_csv(labels_path)
+    labels_df["original_index"] = np.arange(len(labels_df))
     labels_df = labels_df[~labels_df["subject"].isin(IGNORED_SUBJECTS)].reset_index(drop=True)
 
     rng = np.random.default_rng(seed)
@@ -83,12 +84,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--labels",
         type=str,
-        default="/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_psd_labels_state6.csv"
+        default="/home1/amadapur/projects/eeg_trait_state_geometry/data/motor_imagery/motor_psd_labels.csv"
     )
     parser.add_argument(
         "--out_dir",
         type=str,
-        default="/home1/amadapur/projects/eeg_trait_state_geometry/splits/motor_imagery/splits_6classes"
+        default="/home1/amadapur/projects/eeg_trait_state_geometry/splits/motor_imagery/splits_10classes"
     )
     args = parser.parse_args()
 
