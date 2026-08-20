@@ -1,3 +1,19 @@
+import os
+
+MNE_DATA_PATH = "/scratch1/amadapur/mne_data"
+
+os.makedirs(MNE_DATA_PATH, exist_ok=True)
+os.environ["MNE_DATA"] = MNE_DATA_PATH
+
+import mne
+
+mne.set_config(
+    "MNE_DATA",
+    MNE_DATA_PATH,
+    set_env=True,
+)
+
+
 from bci_raw_dataloader import make_bnci_ae_dataloaders as bci_raw_dataloader
 
 from ern_raw_dataloader import make_ern_ae_dataloaders as ern_raw_dataloader
@@ -6,13 +22,11 @@ from gamma_raw_dataloader import make_gamma_ae_dataloaders as gamma_raw_dataload
 
 from motor_raw_dataloader import make_physionet_ae_dataloaders as motor_raw_dataloader
 
-
 from trainer import PreTrainerEEG
 from eegnet_ae import EEGNetAutoEncoder
 
 import argparse
 import json
-import os
 from pathlib import Path
 
 import joblib
@@ -50,6 +64,9 @@ parser.add_argument(
 
 parser.add_argument("--seed", type=int, default=42)
 
+parser.add_argument("--dataset", required=True)
+
+
 args = parser.parse_args()
 
 reproducible(args.seed)
@@ -69,7 +86,7 @@ with open(
     experiment_config = yaml.safe_load(f)
 
 
-dataset = experiment_config["dataset"]
+dataset = args.dataset
 data_cfg = experiment_config["data"][dataset]
 
 
@@ -106,9 +123,12 @@ ae_save_dir.mkdir(parents=True, exist_ok=True)
 base_log_dir = Path(args.logdir)
 base_log_dir.mkdir(parents=True, exist_ok=True)
 
+
 device = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
 )
+
+
 
 split_types = [
     "trait",
@@ -252,7 +272,7 @@ for num_subjects in subjects_list:
                             "physionet/physionet.org/files/"
                             "eegmmidb/1.0.0"
                         ),
-                        val_fraction=0.1,
+                        validation_fraction=0.1,
                         **common_split_args,
                     )
 
@@ -283,9 +303,18 @@ for num_subjects in subjects_list:
                         test_dataloader,
                     ) = gamma_raw_dataloader(
                         data_root=(
-                            "/scratch1/amadapur/data/gamma"
+                            "/scratch1/amadapur/data/"
+                            "gamma/high-gamma-dataset/data/"
+                        ),
+                        cache_dir=(
+                            "/scratch1/amadapur/data/"
+                            "gamma/ae_epoch_cache/"
                         ),
                         val_fraction=0.1,
+                        tmin=0.0,
+                        tmax=4.0,
+                        target_sfreq=250,
+                        num_workers=2,
                         **common_split_args,
                     )
 
@@ -308,10 +337,38 @@ for num_subjects in subjects_list:
                     run_seed += int(target_subject)
 
                 reproducible(run_seed)
+                #infer number of channels from actual dataset
+
+                SAMPLING_RATES = {
+                    "motor": 160,
+                    "gamma": 250,
+                    "bci": 512,
+                    "ern": 1024,
+                }
+                sample = train_dataloader.dataset[0]
+
+                model_params = model_config["model_params"].copy()
+
+                model_params["n_channels"] = sample["x"].shape[0]
+                model_params["sampling_rate"] = SAMPLING_RATES[dataset]
+
+                n_timepoints = sample["x"].shape[1]
+                model_params["n_seconds_input"] = (
+                    n_timepoints / model_params["sampling_rate"]
+                )
+
+                print(
+                    f"{dataset}: "
+                    f"channels={model_params['n_channels']}, "
+                    f"sampling_rate={model_params['sampling_rate']}, "
+                    f"n_timepoints={n_timepoints}, "
+                    f"duration={model_params['n_seconds_input']:.3f}s"
+                )
 
                 model = EEGNetAutoEncoder(
-                    **model_config["model_params"]
+                    **model_params
                 ).to(device)
+
 
                 pretrainer = PreTrainerEEG(
                     model=model,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import mne
 import numpy as np
 import pandas as pd
 import torch
+
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -22,17 +24,25 @@ LABEL_MAP = {
 }
 
 
+# ============================================================
+# Split utilities
+# ============================================================
+
 def validate_indices(
     indices: np.ndarray,
     n_rows: int,
     name: str,
 ) -> None:
+
     if len(indices) == 0:
         raise ValueError(
             f"{name} partition is empty."
         )
 
-    if indices.min() < 0 or indices.max() >= n_rows:
+    if (
+        indices.min() < 0
+        or indices.max() >= n_rows
+    ):
         raise IndexError(
             f"{name} indices must be between "
             f"0 and {n_rows - 1}."
@@ -45,12 +55,7 @@ def stratified_train_val_split(
     val_fraction: float = 0.1,
     seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Split the outer training partition into AE training and validation.
 
-    Splitting is performed within each subject-condition group so that
-    validation represents every subject and condition whenever possible.
-    """
     if not 0 < val_fraction < 1:
         raise ValueError(
             "val_fraction must be between 0 and 1."
@@ -62,15 +67,15 @@ def stratified_train_val_split(
         train_indices
     ]
 
-    final_train_indices: list[int] = []
-    validation_indices: list[int] = []
+    final_train_indices = []
+    validation_indices = []
 
     for _, group in train_rows.groupby(
         ["subject", "condition"],
         sort=False,
     ):
-        group_indices = group.index.to_numpy(
-            dtype=int
+        group_indices = (
+            group.index.to_numpy(dtype=int)
         )
 
         shuffled = rng.permutation(
@@ -78,7 +83,6 @@ def stratified_train_val_split(
         )
 
         if len(shuffled) < 2:
-            # Keep singleton groups in training.
             final_train_indices.extend(
                 shuffled.tolist()
             )
@@ -109,8 +113,7 @@ def stratified_train_val_split(
 
     if not validation_indices:
         raise ValueError(
-            "No validation samples could be created "
-            "from the outer training partition."
+            "No validation samples could be created."
         )
 
     return (
@@ -130,50 +133,41 @@ def get_outer_split_indices(
     split_type: str,
     target_subject: int | str | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Return outer train/test indices for one evaluation protocol.
 
-    trait:
-        One global split. target_subject must be None.
-
-    within_state:
-        One split per target subject.
-
-    between_state:
-        One split per target subject.
-    """
     if split_type == "trait":
+
         if target_subject is not None:
             raise ValueError(
                 "target_subject must be None "
-                "for the trait split."
+                "for trait split."
             )
 
-        outer_train = np.asarray(
+        train_indices = np.asarray(
             split_data["trait_split"]["train"],
             dtype=int,
         )
 
-        outer_test = np.asarray(
+        test_indices = np.asarray(
             split_data["trait_split"]["test"],
             dtype=int,
         )
 
-        return outer_train, outer_test
+        return train_indices, test_indices
 
     if split_type not in {
         "within_state",
         "between_state",
     }:
         raise ValueError(
-            "split_type must be 'trait', "
-            "'within_state', or 'between_state'."
+            "split_type must be "
+            "'trait', 'within_state', "
+            "or 'between_state'."
         )
 
     if target_subject is None:
         raise ValueError(
-            f"target_subject is required for "
-            f"split_type={split_type}."
+            f"target_subject required for "
+            f"{split_type}."
         )
 
     subject_entry = next(
@@ -187,47 +181,53 @@ def get_outer_split_indices(
     )
 
     if subject_entry is None:
-        available_subjects = [
-            entry["subject"]
-            for entry in split_data["splits"]
-        ]
-
         raise ValueError(
-            f"Subject {target_subject} was not found "
-            f"in the split file. Available subjects: "
-            f"{available_subjects}"
+            f"Subject {target_subject} "
+            "not found in split."
         )
 
-    outer_train = np.asarray(
-        subject_entry[split_type]["train"],
+    train_indices = np.asarray(
+        subject_entry[
+            split_type
+        ]["train"],
         dtype=int,
     )
 
-    outer_test = np.asarray(
-        subject_entry[split_type]["test"],
+    test_indices = np.asarray(
+        subject_entry[
+            split_type
+        ]["test"],
         dtype=int,
     )
 
-    return outer_train, outer_test
+    return train_indices, test_indices
 
+
+# ============================================================
+# Fixed-size trial helper
+# ============================================================
 
 def resize_trial(
     trial: np.ndarray,
     target_samples: int,
 ) -> np.ndarray:
-    """
-    Crop or zero-pad a trial to a fixed number of samples.
-    """
-    current_samples = trial.shape[-1]
+
+    current_samples = (
+        trial.shape[-1]
+    )
 
     if current_samples == target_samples:
         return trial
 
     if current_samples > target_samples:
-        return trial[..., :target_samples]
+        return trial[
+            ...,
+            :target_samples,
+        ]
 
     padding = (
-        target_samples - current_samples
+        target_samples
+        - current_samples
     )
 
     return np.pad(
@@ -240,278 +240,113 @@ def resize_trial(
     )
 
 
-class GammaSplitAEDataset(Dataset):
+# ============================================================
+# Disk cache helpers
+# ============================================================
+
+def get_cache_paths(
+    cache_dir: Path,
+    original_part: str,
+    filename: str,
+    target_sfreq: float | None,
+    tmin: float,
+    tmax: float,
+) -> tuple[Path, Path, Path]:
+
+    # Include preprocessing parameters so changing them
+    # automatically creates a different cache.
+    cache_string = (
+        f"{original_part}|"
+        f"{filename}|"
+        f"sfreq={target_sfreq}|"
+        f"tmin={tmin}|"
+        f"tmax={tmax}|"
+        "bandpass=1-45|"
+        "notch=60|"
+        "version=1"
+    )
+
+    cache_hash = hashlib.sha1(
+        cache_string.encode()
+    ).hexdigest()[:16]
+
+    stem = Path(filename).stem
+
+    base = (
+        cache_dir
+        / f"{stem}_{cache_hash}"
+    )
+
+    return (
+        Path(str(base) + "_data.npy"),
+        Path(str(base) + "_labels.npy"),
+        Path(str(base) + "_sfreq.npy"),
+    )
+
+
+def preprocess_gamma_file(
+    data_root: Path,
+    cache_dir: Path,
+    original_part: str,
+    filename: str,
+    target_sfreq: float | None,
+    tmin: float,
+    tmax: float,
+) -> None:
     """
-    Load raw High-Gamma epochs selected by an existing split file.
-
-    Required split metadata columns:
-        subject
-        original_part
-        file
-        trial
-        condition
-
-    The saved trial value refers to the position in the MNE Epochs
-    object recreated from that EDF file.
+    Process one EDF once and save its epochs to disk.
     """
 
-    def __init__(
-        self,
-        data_root: str | os.PathLike[str],
-        split_path: str | os.PathLike[str],
-        partition: str,
-        split_type: str = "trait",
-        target_subject: int | str | None = None,
-        val_fraction: float = 0.1,
-        validation_seed: int = 42,
-        target_sfreq: float | None = None,
-        tmin: float = 0.0,
-        tmax: float = 4.0,
+    data_path, labels_path, sfreq_path = (
+        get_cache_paths(
+            cache_dir=cache_dir,
+            original_part=original_part,
+            filename=filename,
+            target_sfreq=target_sfreq,
+            tmin=tmin,
+            tmax=tmax,
+        )
+    )
+
+    # Already processed.
+    if (
+        data_path.exists()
+        and labels_path.exists()
+        and sfreq_path.exists()
     ):
-        if partition not in {
-            "train",
-            "val",
-            "test",
-        }:
-            raise ValueError(
-                "partition must be 'train', "
-                "'val', or 'test'."
-            )
+        return
 
-        self.data_root = Path(data_root)
-        self.split_path = Path(split_path)
-        self.partition = partition
-        self.split_type = split_type
-        self.target_subject = target_subject
-        self.target_sfreq = target_sfreq
-        self.tmin = float(tmin)
-        self.tmax = float(tmax)
+    edf_path = (
+        data_root
+        / original_part
+        / filename
+    )
 
-        if not self.data_root.exists():
-            raise FileNotFoundError(
-                f"Gamma data root does not exist: "
-                f"{self.data_root}"
-            )
-
-        if not self.split_path.exists():
-            raise FileNotFoundError(
-                f"Split file does not exist: "
-                f"{self.split_path}"
-            )
-
-        split_data = joblib.load(
-            self.split_path
+    if not edf_path.exists():
+        raise FileNotFoundError(
+            f"Gamma EDF not found: "
+            f"{edf_path}"
         )
 
-        required_keys = {
-            "metadata",
-            "trait_split",
-            "splits",
-        }
+    print(
+        f"[Gamma cache] Processing "
+        f"{edf_path}"
+    )
 
-        missing_keys = (
-            required_keys - set(split_data)
-        )
+    raw = mne.io.read_raw_edf(
+        edf_path,
+        preload=True,
+        infer_types=True,
+        verbose=False,
+    )
 
-        if missing_keys:
-            raise ValueError(
-                f"{self.split_path.name} is missing keys: "
-                f"{sorted(missing_keys)}"
-            )
-
-        metadata = split_data[
-            "metadata"
-        ].copy()
-
-        metadata.columns = (
-            metadata.columns
-            .str.lower()
-            .str.strip()
-        )
-
-        required_columns = {
-            "subject",
-            "original_part",
-            "file",
-            "trial",
-            "condition",
-        }
-
-        missing_columns = (
-            required_columns
-            - set(metadata.columns)
-        )
-
-        if missing_columns:
-            raise ValueError(
-                f"{self.split_path.name} metadata is "
-                f"missing columns: "
-                f"{sorted(missing_columns)}"
-            )
-
-        metadata["subject"] = (
-            metadata["subject"].astype(int)
-        )
-
-        metadata["original_part"] = (
-            metadata["original_part"].astype(str)
-        )
-
-        metadata["file"] = (
-            metadata["file"].astype(str)
-        )
-
-        metadata["trial"] = (
-            metadata["trial"].astype(int)
-        )
-
-        metadata["condition"] = (
-            metadata["condition"].astype(int)
-        )
-
-        outer_train, outer_test = (
-            get_outer_split_indices(
-                split_data=split_data,
-                split_type=split_type,
-                target_subject=target_subject,
-            )
-        )
-
-        validate_indices(
-            outer_train,
-            len(metadata),
-            f"{split_type} outer train",
-        )
-
-        validate_indices(
-            outer_test,
-            len(metadata),
-            f"{split_type} outer test",
-        )
-
-        overlap = np.intersect1d(
-            outer_train,
-            outer_test,
-        )
-
-        if overlap.size:
-            raise ValueError(
-                f"{split_type} outer train and "
-                "test partitions overlap."
-            )
-
-        ae_train, ae_validation = (
-            stratified_train_val_split(
-                metadata=metadata,
-                train_indices=outer_train,
-                val_fraction=val_fraction,
-                seed=validation_seed,
-            )
-        )
-
-        if partition == "train":
-            selected_indices = ae_train
-
-        elif partition == "val":
-            selected_indices = ae_validation
-
-        else:
-            selected_indices = outer_test
-
-        self.metadata = (
-            metadata
-            .iloc[selected_indices]
-            .copy()
-            .reset_index(drop=True)
-        )
-
-        # Each DataLoader worker maintains its own cache.
-        # Key: (original_part, filename)
-        self._epoch_cache: dict[
-            tuple[str, str],
-            tuple[
-                np.ndarray,
-                np.ndarray,
-                float,
-            ],
-        ] = {}
-
-        condition_counts = (
-            self.metadata["condition"]
-            .value_counts()
-            .sort_index()
-        )
-
-        print(
-            f"[Gamma {partition}] "
-            f"split={self.split_path.name}"
-        )
-
-        print(
-            f"[Gamma {partition}] "
-            f"type={split_type}, "
-            f"target_subject={target_subject}"
-        )
-
-        print(
-            f"[Gamma {partition}] "
-            f"subjects="
-            f"{self.metadata['subject'].nunique()}, "
-            f"trials={len(self.metadata)}"
-        )
-
-        print(
-            f"[Gamma {partition}] conditions:\n"
-            f"{condition_counts}"
-        )
-
-    def _load_file_epochs(
-        self,
-        original_part: str,
-        filename: str,
-    ) -> tuple[
-        np.ndarray,
-        np.ndarray,
-        float,
-    ]:
-        """
-        Reproduce the preprocessing and epoching from make_gamma_all().
-        """
-        cache_key = (
-            original_part,
-            filename,
-        )
-
-        if cache_key in self._epoch_cache:
-            return self._epoch_cache[
-                cache_key
-            ]
-
-        edf_path = (
-            self.data_root
-            / original_part
-            / filename
-        )
-
-        if not edf_path.exists():
-            raise FileNotFoundError(
-                f"Gamma EDF file not found: "
-                f"{edf_path}"
-            )
-
-        raw = mne.io.read_raw_edf(
-            edf_path,
-            preload=True,
-            infer_types=True,
-            verbose=False,
-        )
-
+    try:
         original_sfreq = float(
             raw.info["sfreq"]
         )
 
-        # Must match the preprocessing used when the
-        # Gamma split metadata was created.
+        # Must match the preprocessing
+        # used for Gamma features.
         raw.filter(
             1.0,
             45.0,
@@ -535,92 +370,280 @@ class GammaSplitAEDataset(Dataset):
             raw,
             events,
             event_id=LABEL_MAP,
-            tmin=self.tmin,
-            tmax=self.tmax,
+            tmin=tmin,
+            tmax=tmax,
             baseline=None,
             preload=True,
             verbose=False,
         )
 
-        data = epochs.get_data(
-            copy=True,
-        ).astype(np.float32)
+        data = (
+            epochs
+            .get_data(copy=True)
+            .astype(np.float32)
+        )
 
         labels = (
             epochs.events[:, 2]
-            .astype(int)
+            .astype(np.int64)
         )
 
+        del epochs
+
+    finally:
         raw.close()
+        del raw
 
-        final_sfreq = original_sfreq
+    final_sfreq = (
+        original_sfreq
+    )
 
-        if (
-            self.target_sfreq is not None
-            and not np.isclose(
-                original_sfreq,
-                self.target_sfreq,
-            )
-        ):
-            data = mne.filter.resample(
-                data,
-                up=float(
-                    self.target_sfreq
-                ),
-                down=original_sfreq,
-                axis=-1,
-                verbose=False,
-            ).astype(np.float32)
+    if (
+        target_sfreq is not None
+        and not np.isclose(
+            original_sfreq,
+            target_sfreq,
+        )
+    ):
+        data = mne.filter.resample(
+            data,
+            up=float(target_sfreq),
+            down=original_sfreq,
+            axis=-1,
+            verbose=False,
+        ).astype(np.float32)
 
-            final_sfreq = float(
-                self.target_sfreq
-            )
-
-        # MNE includes the endpoint, so a 0–4 second epoch
-        # often contains 4 * sfreq + 1 samples.
-        target_samples = (
-            int(
-                round(
-                    (self.tmax - self.tmin)
-                    * final_sfreq
-                )
-            )
-            + 1
+        final_sfreq = float(
+            target_sfreq
         )
 
-        if data.shape[-1] != target_samples:
-            data = np.stack(
-                [
-                    resize_trial(
-                        trial=trial,
-                        target_samples=(
-                            target_samples
-                        ),
-                    )
-                    for trial in data
-                ]
-            ).astype(np.float32)
+    # MNE epochs include the endpoint.
+    target_samples = (
+        int(
+            round(
+                (tmax - tmin)
+                * final_sfreq
+            )
+        )
+        + 1
+    )
+
+    if (
+        data.shape[-1]
+        != target_samples
+    ):
+        data = np.stack(
+            [
+                resize_trial(
+                    trial,
+                    target_samples,
+                )
+                for trial in data
+            ]
+        ).astype(np.float32)
+
+    # Save uncompressed .npy files so they can
+    # later be memory-mapped.
+    np.save(
+        data_path,
+        data,
+    )
+
+    np.save(
+        labels_path,
+        labels,
+    )
+
+    np.save(
+        sfreq_path,
+        np.asarray(
+            [final_sfreq],
+            dtype=np.float32,
+        ),
+    )
+
+    print(
+        f"[Gamma cache] Saved "
+        f"{len(data)} trials | "
+        f"shape={data.shape}"
+    )
+
+    del data
+    del labels
+
+
+def prepare_gamma_cache(
+    metadata: pd.DataFrame,
+    data_root: Path,
+    cache_dir: Path,
+    target_sfreq: float | None,
+    tmin: float,
+    tmax: float,
+) -> None:
+    """
+    Ensure every EDF needed by this split is
+    processed exactly once before training.
+    """
+
+    cache_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    files = (
+        metadata[
+            [
+                "original_part",
+                "file",
+            ]
+        ]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
+
+    print(
+        f"[Gamma cache] "
+        f"{len(files)} unique EDF files required"
+    )
+
+    for _, row in files.iterrows():
+
+        preprocess_gamma_file(
+            data_root=data_root,
+            cache_dir=cache_dir,
+            original_part=str(
+                row["original_part"]
+            ),
+            filename=str(
+                row["file"]
+            ),
+            target_sfreq=target_sfreq,
+            tmin=tmin,
+            tmax=tmax,
+        )
+
+
+# ============================================================
+# Dataset
+# ============================================================
+
+class GammaCachedDataset(Dataset):
+
+    def __init__(
+        self,
+        metadata: pd.DataFrame,
+        cache_dir: str | os.PathLike,
+        target_sfreq: float | None,
+        tmin: float,
+        tmax: float,
+    ):
+
+        self.metadata = (
+            metadata
+            .reset_index(drop=True)
+        )
+
+        self.cache_dir = Path(
+            cache_dir
+        )
+
+        self.target_sfreq = (
+            target_sfreq
+        )
+
+        self.tmin = float(tmin)
+        self.tmax = float(tmax)
+
+        # Small cache of mmap handles.
+        # These do NOT load entire arrays into RAM.
+        self._memmap_cache = {}
+        self._max_open_files = 4
+
+    def __len__(self):
+        return len(
+            self.metadata
+        )
+
+    def _get_cached_arrays(
+        self,
+        original_part: str,
+        filename: str,
+    ):
+
+        key = (
+            original_part,
+            filename,
+        )
+
+        if key in self._memmap_cache:
+            return self._memmap_cache[
+                key
+            ]
+
+        (
+            data_path,
+            labels_path,
+            sfreq_path,
+        ) = get_cache_paths(
+            cache_dir=self.cache_dir,
+            original_part=original_part,
+            filename=filename,
+            target_sfreq=self.target_sfreq,
+            tmin=self.tmin,
+            tmax=self.tmax,
+        )
+
+        data = np.load(
+            data_path,
+            mmap_mode="r",
+        )
+
+        labels = np.load(
+            labels_path,
+            mmap_mode="r",
+        )
+
+        sfreq = float(
+            np.load(
+                sfreq_path
+            )[0]
+        )
 
         result = (
             data,
             labels,
-            final_sfreq,
+            sfreq,
         )
 
-        self._epoch_cache[
-            cache_key
+        # Keep only a few mmap handles.
+        if (
+            len(self._memmap_cache)
+            >= self._max_open_files
+        ):
+            first_key = next(
+                iter(
+                    self._memmap_cache
+                )
+            )
+
+            del self._memmap_cache[
+                first_key
+            ]
+
+        self._memmap_cache[
+            key
         ] = result
 
         return result
-
-    def __len__(self) -> int:
-        return len(self.metadata)
 
     def __getitem__(
         self,
         index: int,
     ) -> dict[str, Any]:
-        row = self.metadata.iloc[index]
+
+        row = self.metadata.iloc[
+            index
+        ]
 
         original_part = str(
             row["original_part"]
@@ -639,9 +662,9 @@ class GammaSplitAEDataset(Dataset):
         )
 
         data, labels, sfreq = (
-            self._load_file_epochs(
-                original_part=original_part,
-                filename=filename,
+            self._get_cached_arrays(
+                original_part,
+                filename,
             )
         )
 
@@ -650,32 +673,43 @@ class GammaSplitAEDataset(Dataset):
             or trial_index >= len(data)
         ):
             raise IndexError(
-                f"Trial {trial_index} is invalid for "
-                f"{filename}; the recreated Epochs "
-                f"object contains {len(data)} trials."
+                f"Invalid trial "
+                f"{trial_index} for "
+                f"{filename}. "
+                f"File has {len(data)} trials."
             )
 
         actual_condition = int(
             labels[trial_index]
         )
 
-        if actual_condition != expected_condition:
+        if (
+            actual_condition
+            != expected_condition
+        ):
             raise ValueError(
-                f"Condition mismatch for {filename}, "
-                f"trial {trial_index}: split metadata "
-                f"says {expected_condition}, but the "
-                f"recreated raw epoch says "
-                f"{actual_condition}."
+                f"Condition mismatch: "
+                f"{filename}, "
+                f"trial={trial_index}, "
+                f"expected="
+                f"{expected_condition}, "
+                f"actual="
+                f"{actual_condition}"
             )
 
+        # Copy only ONE trial from the mmap.
+        x_np = np.array(
+            data[trial_index],
+            dtype=np.float32,
+            copy=True,
+        )
+
         x = torch.from_numpy(
-            data[trial_index]
+            x_np
         ).float()
 
-        item: dict[str, Any] = {
+        item = {
             "x": x,
-
-            # Autoencoder reconstruction target.
             "labels": x,
 
             "subject": torch.tensor(
@@ -709,17 +743,23 @@ class GammaSplitAEDataset(Dataset):
             "original_index"
             in self.metadata.columns
         ):
-            item["original_index"] = (
-                torch.tensor(
-                    int(
-                        row["original_index"]
-                    ),
-                    dtype=torch.long,
-                )
+            item[
+                "original_index"
+            ] = torch.tensor(
+                int(
+                    row[
+                        "original_index"
+                    ]
+                ),
+                dtype=torch.long,
             )
 
         return item
 
+
+# ============================================================
+# DataLoader construction
+# ============================================================
 
 def make_gamma_ae_dataloaders(
     data_root: str | os.PathLike[str],
@@ -732,76 +772,292 @@ def make_gamma_ae_dataloaders(
     target_sfreq: float | None = None,
     tmin: float = 0.0,
     tmax: float = 4.0,
-    num_workers: int = 4,
+    num_workers: int = 2,
+    cache_dir: (
+        str
+        | os.PathLike[str]
+        | None
+    ) = None,
 ) -> tuple[
     DataLoader,
     DataLoader,
     DataLoader,
 ]:
-    """
-    Construct train, validation, and test loaders for one
-    Gamma split protocol.
 
-    For trait:
-        target_subject must be None.
+    data_root = Path(
+        data_root
+    )
 
-    For within_state and between_state:
-        target_subject identifies the per-subject split.
-    """
-    common_args = {
-        "data_root": data_root,
-        "split_path": split_path,
-        "split_type": split_type,
-        "target_subject": target_subject,
-        "val_fraction": val_fraction,
-        "validation_seed": validation_seed,
+    split_path = Path(
+        split_path
+    )
+
+    if cache_dir is None:
+        cache_dir = (
+            data_root
+            / "_gamma_ae_cache"
+        )
+
+    cache_dir = Path(
+        cache_dir
+    )
+
+    if not split_path.exists():
+        raise FileNotFoundError(
+            f"Split not found: "
+            f"{split_path}"
+        )
+
+    split_data = joblib.load(
+        split_path
+    )
+
+    metadata = (
+        split_data["metadata"]
+        .copy()
+    )
+
+    metadata.columns = (
+        metadata.columns
+        .str.lower()
+        .str.strip()
+    )
+
+    required_columns = {
+        "subject",
+        "original_part",
+        "file",
+        "trial",
+        "condition",
+    }
+
+    missing = (
+        required_columns
+        - set(metadata.columns)
+    )
+
+    if missing:
+        raise ValueError(
+            f"Missing metadata columns: "
+            f"{sorted(missing)}"
+        )
+
+    metadata[
+        "subject"
+    ] = (
+        metadata[
+            "subject"
+        ].astype(int)
+    )
+
+    metadata[
+        "original_part"
+    ] = (
+        metadata[
+            "original_part"
+        ].astype(str)
+    )
+
+    metadata[
+        "file"
+    ] = (
+        metadata[
+            "file"
+        ].astype(str)
+    )
+
+    metadata[
+        "trial"
+    ] = (
+        metadata[
+            "trial"
+        ].astype(int)
+    )
+
+    metadata[
+        "condition"
+    ] = (
+        metadata[
+            "condition"
+        ].astype(int)
+    )
+
+    # --------------------------------------------------------
+    # Outer split
+    # --------------------------------------------------------
+
+    outer_train, outer_test = (
+        get_outer_split_indices(
+            split_data,
+            split_type,
+            target_subject,
+        )
+    )
+
+    validate_indices(
+        outer_train,
+        len(metadata),
+        "outer train",
+    )
+
+    validate_indices(
+        outer_test,
+        len(metadata),
+        "outer test",
+    )
+
+    if np.intersect1d(
+        outer_train,
+        outer_test,
+    ).size:
+        raise ValueError(
+            "Train/test split overlap."
+        )
+
+    ae_train, ae_val = (
+        stratified_train_val_split(
+            metadata,
+            outer_train,
+            val_fraction,
+            validation_seed,
+        )
+    )
+
+    # --------------------------------------------------------
+    # Process each required EDF ONCE.
+    # --------------------------------------------------------
+
+    needed_indices = np.unique(
+        np.concatenate(
+            [
+                ae_train,
+                ae_val,
+                outer_test,
+            ]
+        )
+    )
+
+    needed_metadata = (
+        metadata
+        .iloc[needed_indices]
+    )
+
+    prepare_gamma_cache(
+        metadata=needed_metadata,
+        data_root=data_root,
+        cache_dir=cache_dir,
+        target_sfreq=target_sfreq,
+        tmin=tmin,
+        tmax=tmax,
+    )
+
+    # --------------------------------------------------------
+    # Create partition metadata
+    # --------------------------------------------------------
+
+    train_metadata = (
+        metadata
+        .iloc[ae_train]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+    val_metadata = (
+        metadata
+        .iloc[ae_val]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+    test_metadata = (
+        metadata
+        .iloc[outer_test]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+    # --------------------------------------------------------
+    # Datasets
+    # --------------------------------------------------------
+
+    common_dataset_args = {
+        "cache_dir": cache_dir,
         "target_sfreq": target_sfreq,
         "tmin": tmin,
         "tmax": tmax,
     }
 
-    train_dataset = GammaSplitAEDataset(
-        partition="train",
-        **common_args,
+    train_dataset = (
+        GammaCachedDataset(
+            metadata=train_metadata,
+            **common_dataset_args,
+        )
     )
 
-    val_dataset = GammaSplitAEDataset(
-        partition="val",
-        **common_args,
+    val_dataset = (
+        GammaCachedDataset(
+            metadata=val_metadata,
+            **common_dataset_args,
+        )
     )
 
-    test_dataset = GammaSplitAEDataset(
-        partition="test",
-        **common_args,
+    test_dataset = (
+        GammaCachedDataset(
+            metadata=test_metadata,
+            **common_dataset_args,
+        )
     )
 
-    loader_args = {
-        "batch_size": batch_size,
-        "num_workers": num_workers,
-        "pin_memory": (
-            torch.cuda.is_available()
-        ),
-        "persistent_workers": (
-            num_workers > 0
-        ),
-    }
+    print(
+        f"[Gamma train] "
+        f"subjects="
+        f"{train_metadata['subject'].nunique()}, "
+        f"trials={len(train_metadata)}"
+    )
+
+    print(
+        f"[Gamma val] "
+        f"subjects="
+        f"{val_metadata['subject'].nunique()}, "
+        f"trials={len(val_metadata)}"
+    )
+
+    print(
+        f"[Gamma test] "
+        f"subjects="
+        f"{test_metadata['subject'].nunique()}, "
+        f"trials={len(test_metadata)}"
+    )
+
+    # --------------------------------------------------------
+    # DataLoaders
+    # --------------------------------------------------------
 
     train_loader = DataLoader(
         train_dataset,
+        batch_size=batch_size,
         shuffle=True,
-        **loader_args,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=(
+            num_workers > 0
+        ),
     )
 
     val_loader = DataLoader(
         val_dataset,
+        batch_size=batch_size,
         shuffle=False,
-        **loader_args,
+        num_workers=0,
+        pin_memory=torch.cuda.is_available(),
     )
 
     test_loader = DataLoader(
         test_dataset,
+        batch_size=batch_size,
         shuffle=False,
-        **loader_args,
+        num_workers=0,
+        pin_memory=torch.cuda.is_available(),
     )
 
     return (

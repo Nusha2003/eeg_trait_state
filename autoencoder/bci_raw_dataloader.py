@@ -692,23 +692,29 @@ def make_bnci_ae_dataloaders(
             num_workers > 0
         ),
     }
-
     train_loader = DataLoader(
         train_dataset,
+        batch_size=batch_size,
         shuffle=True,
-        **loader_args,
+        num_workers=2,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=False,
     )
 
-    validation_loader = DataLoader(
+    val_loader = DataLoader(
         validation_dataset,
+        batch_size=batch_size,
         shuffle=False,
-        **loader_args,
+        num_workers=0,
+        pin_memory=torch.cuda.is_available(),
     )
 
     test_loader = DataLoader(
         test_dataset,
+        batch_size=batch_size,
         shuffle=False,
-        **loader_args,
+        num_workers=0,
+        pin_memory=torch.cuda.is_available(),
     )
 
     print(
@@ -742,6 +748,6 @@ def make_bnci_ae_dataloaders(
 
     return (
         train_loader,
-        validation_loader,
+        val_loader,
         test_loader,
     )
