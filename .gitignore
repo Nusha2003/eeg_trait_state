@@ -1,6 +1,6 @@
 data/
 *.out
-logs/
+**/logs/
 __pycache__/
 *.pkl
 results/
@@ -12,3 +12,4 @@ outputs/
 results/
 splits/
 **/embeddings/
+**/run_logs/
