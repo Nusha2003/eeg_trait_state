@@ -9,6 +9,6 @@ plots/
 logs/
 jobs/
 outputs/
-results_dir/
 results/
 splits/
+**/embeddings/

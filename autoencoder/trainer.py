@@ -28,6 +28,7 @@ from sklearn.preprocessing import label_binarize
 class PreTrainerEEG:
     def __init__(
             self,
+            min_delta,
             model=None,
             model_checkpoint: str = None,
             logdir: str = None,
@@ -74,6 +75,7 @@ class PreTrainerEEG:
         
         self.n_iters = 0
         self.save_n_iters = save_n_iters
+        self.min_delta = min_delta
 
         # Optimizer Setup
         if optimizer_args["type"] == "adam":
@@ -322,7 +324,7 @@ class PreTrainerEEG:
         # Calculate average safely
         avg_eval_loss = (eval_loss / total_batches).item() if total_batches.item() > 0 else 0.0
 
-        if avg_eval_loss < self.best_val:
+        if avg_eval_loss < self.best_val - self.min_delta:
             self.best_val = avg_eval_loss
             self.early_stop_counter = 0 
             is_new_best = True
@@ -343,22 +345,47 @@ class PreTrainerEEG:
                 print(f"New best model saved with loss {self.best_val:.4f}")
     
     @torch.no_grad()
-    def save_embeddings(self, dataloader, save_path, split="test"):
-        self._load_model(self.best_checkpoint_path)
+    def save_embeddings(
+        self,
+        dataloader,
+        save_path,
+        split="test",
+    ):
+        self._load_model(
+            self.best_checkpoint_path
+        )
+
         self.model.eval()
 
-        os.makedirs(save_path, exist_ok=True)
+        os.makedirs(
+            save_path,
+            exist_ok=True,
+        )
 
         all_embeddings = []
+
+        # Common metadata
         all_subjects = []
-        all_runs = []
         all_conditions = []
+
+        # Optional numeric metadata
+        all_runs = []
         all_epochs = []
+        all_trials = []
+        all_original_indices = []
+        all_sfreqs = []
+        all_moabb_indices = []
+
+        # Optional string metadata
+        all_files = []
+        all_original_parts = []
+        all_sessions = []
 
         for batch in dataloader:
             if not isinstance(batch, dict):
                 raise TypeError(
-                    "Expected each dataloader batch to be a dictionary."
+                    "Expected each dataloader batch "
+                    "to be a dictionary."
                 )
 
             inputs = batch["x"].to(
@@ -374,75 +401,134 @@ class PreTrainerEEG:
 
             z = outputs["embeddings"]
 
-            # Convert latent output to shape:
+            # Convert latent output to:
             # (batch_size, latent_dim)
-            z = torch.flatten(z, start_dim=1)
+            z = torch.flatten(
+                z,
+                start_dim=1,
+            )
 
             all_embeddings.append(
-                z.detach().cpu().numpy()
+                z.detach()
+                .cpu()
+                .numpy()
             )
 
-            all_subjects.append(
-                batch["subject"].detach().cpu().numpy()
-            )
+            # ==========================================
+            # Common metadata
+            # ==========================================
 
-            all_runs.append(
-                batch["run"].detach().cpu().numpy()
-            )
+            if "subject" in batch:
+                all_subjects.append(
+                    batch["subject"]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
 
-            all_conditions.append(
-                batch["condition"].detach().cpu().numpy()
-            )
+            if "condition" in batch:
+                all_conditions.append(
+                    batch["condition"]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
 
-            all_epochs.append(
-                batch["epoch"].detach().cpu().numpy()
-            )
+            # ==========================================
+            # Optional numeric metadata
+            # ==========================================
+
+            if "run" in batch:
+                if torch.is_tensor(
+                    batch["run"]
+                ):
+                    all_runs.append(
+                        batch["run"]
+                        .detach()
+                        .cpu()
+                        .numpy()
+                    )
+                else:
+                    all_runs.extend(
+                        list(batch["run"])
+                    )
+
+            if "epoch" in batch:
+                all_epochs.append(
+                    batch["epoch"]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
+
+            if "trial" in batch:
+                all_trials.append(
+                    batch["trial"]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
+
+            if "original_index" in batch:
+                all_original_indices.append(
+                    batch["original_index"]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
+
+            if "sfreq" in batch:
+                all_sfreqs.append(
+                    batch["sfreq"]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
+
+            if "moabb_index" in batch:
+                all_moabb_indices.append(
+                    batch["moabb_index"]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
+
+            # ==========================================
+            # Optional string metadata
+            # ==========================================
+
+            if "file" in batch:
+                all_files.extend(
+                    list(batch["file"])
+                )
+
+            if "original_part" in batch:
+                all_original_parts.extend(
+                    list(
+                        batch["original_part"]
+                    )
+                )
+
+            if "session" in batch:
+                all_sessions.extend(
+                    list(batch["session"])
+                )
 
         if len(all_embeddings) == 0:
-            raise ValueError("The dataloader produced no batches.")
+            raise ValueError(
+                "The dataloader produced no batches."
+            )
 
         embeddings = np.concatenate(
             all_embeddings,
             axis=0,
         )
 
-        subjects = np.concatenate(
-            all_subjects,
-            axis=0,
-        )
-
-        runs = np.concatenate(
-            all_runs,
-            axis=0,
-        )
-
-        conditions = np.concatenate(
-            all_conditions,
-            axis=0,
-        )
-
-        epochs = np.concatenate(
-            all_epochs,
-            axis=0,
-        )
-
         n_samples = embeddings.shape[0]
 
-        if not (
-            len(subjects)
-            == len(runs)
-            == len(conditions)
-            == len(epochs)
-            == n_samples
-        ):
-            raise ValueError(
-                "Embedding and metadata lengths do not match:\n"
-                f"embeddings: {n_samples}\n"
-                f"subjects: {len(subjects)}\n"
-                f"runs: {len(runs)}\n"
-                f"conditions: {len(conditions)}\n"
-                f"epochs: {len(epochs)}"
-            )
+        # ==========================================
+        # Save embeddings
+        # ==========================================
 
         np.save(
             os.path.join(
@@ -452,47 +538,189 @@ class PreTrainerEEG:
             embeddings,
         )
 
-        np.save(
-            os.path.join(
-                save_path,
-                f"{split}_subjects.npy",
-            ),
-            subjects,
+        print(
+            f"\nSaved {split} embeddings"
+        )
+        print(
+            f"Embeddings: {embeddings.shape}"
         )
 
-        np.save(
-            os.path.join(
-                save_path,
-                f"{split}_runs.npy",
-            ),
-            runs,
+        # ==========================================
+        # Helper for optional numeric arrays
+        # ==========================================
+
+        def save_numeric(
+            values,
+            name,
+        ):
+            if not values:
+                return None
+
+            if isinstance(
+                values[0],
+                np.ndarray,
+            ):
+                array = np.concatenate(
+                    values,
+                    axis=0,
+                )
+            else:
+                array = np.asarray(
+                    values
+                )
+
+            if len(array) != n_samples:
+                raise ValueError(
+                    f"{name} length does not "
+                    f"match embeddings: "
+                    f"{len(array)} vs {n_samples}"
+                )
+
+            np.save(
+                os.path.join(
+                    save_path,
+                    f"{split}_{name}.npy",
+                ),
+                array,
+            )
+
+            print(
+                f"{name}: {array.shape}"
+            )
+
+            return array
+
+        # ==========================================
+        # Save common metadata
+        # ==========================================
+
+        subjects = save_numeric(
+            all_subjects,
+            "subjects",
         )
 
-        np.save(
-            os.path.join(
-                save_path,
-                f"{split}_conditions.npy",
-            ),
-            conditions,
+        conditions = save_numeric(
+            all_conditions,
+            "conditions",
         )
 
-        np.save(
-            os.path.join(
-                save_path,
-                f"{split}_epochs.npy",
-            ),
-            epochs,
+        # ==========================================
+        # Save dataset-specific numeric metadata
+        # ==========================================
+
+        runs = save_numeric(
+            all_runs,
+            "runs",
         )
 
-        print(f"\nSaved {split} embeddings")
-        print(f"Embeddings: {embeddings.shape}")
-        print(f"Subjects: {subjects.shape}")
-        print(f"Runs: {runs.shape}")
-        print(f"Conditions: {conditions.shape}")
-        print(f"Epochs: {epochs.shape}")
-        print(f"Unique subjects: {np.unique(subjects).size}")
-        print(f"Unique runs: {np.unique(runs)}")
-        print(f"Unique conditions: {np.unique(conditions)}")
+        epochs = save_numeric(
+            all_epochs,
+            "epochs",
+        )
+
+        trials = save_numeric(
+            all_trials,
+            "trials",
+        )
+
+        original_indices = save_numeric(
+            all_original_indices,
+            "original_indices",
+        )
+
+        sfreqs = save_numeric(
+            all_sfreqs,
+            "sfreqs",
+        )
+
+        moabb_indices = save_numeric(
+            all_moabb_indices,
+            "moabb_indices",
+        )
+
+        # ==========================================
+        # Helper for optional string arrays
+        # ==========================================
+
+        def save_strings(
+            values,
+            name,
+        ):
+            if not values:
+                return None
+
+            array = np.asarray(
+                values,
+                dtype=str,
+            )
+
+            if len(array) != n_samples:
+                raise ValueError(
+                    f"{name} length does not "
+                    f"match embeddings: "
+                    f"{len(array)} vs {n_samples}"
+                )
+
+            np.save(
+                os.path.join(
+                    save_path,
+                    f"{split}_{name}.npy",
+                ),
+                array,
+            )
+
+            print(
+                f"{name}: {array.shape}"
+            )
+
+            return array
+
+        # ==========================================
+        # Save dataset-specific string metadata
+        # ==========================================
+
+        files = save_strings(
+            all_files,
+            "files",
+        )
+
+        original_parts = save_strings(
+            all_original_parts,
+            "original_parts",
+        )
+
+        sessions = save_strings(
+            all_sessions,
+            "sessions",
+        )
+
+        # ==========================================
+        # Summary
+        # ==========================================
+
+        if subjects is not None:
+            print(
+                "Unique subjects:",
+                np.unique(subjects).size,
+            )
+
+        if conditions is not None:
+            print(
+                "Unique conditions:",
+                np.unique(conditions),
+            )
+
+        if runs is not None:
+            print(
+                "Unique runs:",
+                np.unique(runs),
+            )
+
+        if trials is not None:
+            print(
+                "Unique trials:",
+                np.unique(trials).size,
+            )
 """
 class TrainerEEG:
     def __init__(

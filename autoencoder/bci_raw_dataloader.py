@@ -6,6 +6,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+MNE_DATA_PATH = "/scratch1/amadapur/mne_data"
+
+Path(MNE_DATA_PATH).mkdir(parents=True, exist_ok=True)
+os.environ["MNE_DATA"] = MNE_DATA_PATH
+
 import joblib
 import numpy as np
 import pandas as pd

@@ -1,6 +1,6 @@
 
 dataset: gamma
-feature: complexity
+feature: autoencoder
 data:
 
   motor:

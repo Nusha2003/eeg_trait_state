@@ -5,46 +5,254 @@ import re
 from pathlib import Path
 
 import joblib
-import pandas as pd
-from joblib import Parallel, delayed
 import numpy as np
+import pandas as pd
 
 from hierarchy_metric import HierarchyMetric
 from representation_utils import load_experiment_config
 
-"""
+
+# ============================================================
+# Autoencoder hierarchy
+# ============================================================
+
+def evaluate_autoencoder_folder(
+    run_folder: Path,
+    num_subjects: str,
+    rep: int,
+    n_perm: int,
+) -> dict:
+    """
+    Calculate hierarchy using TEST embeddings only from
+    one trait autoencoder run.
+
+    Expected files:
+        test_embeddings.npy
+        test_subjects.npy
+        test_conditions.npy
+    """
+
+    embeddings_path = (
+        run_folder
+        / "test_embeddings.npy"
+    )
+
+    subjects_path = (
+        run_folder
+        / "test_subjects.npy"
+    )
+
+    conditions_path = (
+        run_folder
+        / "test_conditions.npy"
+    )
+
+    required_files = [
+        embeddings_path,
+        subjects_path,
+        conditions_path,
+    ]
+
+    missing = [
+        path
+        for path in required_files
+        if not path.exists()
+    ]
+
+    if missing:
+        raise FileNotFoundError(
+            "Missing autoencoder files:\n"
+            + "\n".join(
+                str(path)
+                for path in missing
+            )
+        )
+
+    X_test = np.load(
+        embeddings_path
+    )
+
+    subjects = np.load(
+        subjects_path
+    )
+
+    conditions = np.load(
+        conditions_path
+    )
+
+    if not (
+        len(X_test)
+        == len(subjects)
+        == len(conditions)
+    ):
+        raise ValueError(
+            f"Embedding/metadata mismatch in "
+            f"{run_folder}:\n"
+            f"embeddings={len(X_test)}\n"
+            f"subjects={len(subjects)}\n"
+            f"conditions={len(conditions)}"
+        )
+
+    labels = pd.DataFrame({
+        "subject": subjects,
+        "condition": conditions,
+    })
+
+    print(
+        f"AE | "
+        f"n={num_subjects}, "
+        f"rep={rep}, "
+        f"samples={len(X_test)}, "
+        f"subjects={labels['subject'].nunique()}, "
+        f"conditions={labels['condition'].nunique()}"
+    )
+
+    metric = HierarchyMetric(
+        X_test,
+        labels,
+    )
+
+    result = metric.evaluate(
+        n_perm=n_perm,
+    )
+
+    return {
+        "num_subjects": num_subjects,
+        "seed": rep,
+        "split_type": "trait",
+        "space": "autoencoder",
+        "hier_ratio": result["ratio"],
+        "inter": result["inter"],
+        "intra": result["intra"],
+        "hier_pval": result["p_value"],
+    }
+
+
+def evaluate_autoencoder(
+    experiment: dict,
+    n_perm: int,
+) -> pd.DataFrame:
+    """
+    Traverse:
+
+    save_dir/
+        autoencoder/
+            trait/
+                n4_rep0/
+                n4_rep1/
+                ...
+                nall_rep0/
+    """
+
+    trait_dir = (
+        experiment["save_dir"]
+        / "autoencoder"
+        / "trait"
+    )
+
+    if not trait_dir.exists():
+        raise FileNotFoundError(
+            f"Autoencoder trait directory "
+            f"not found: {trait_dir}"
+        )
+
+    rows = []
+
+    for run_folder in sorted(
+        trait_dir.iterdir()
+    ):
+        if not run_folder.is_dir():
+            continue
+
+        match = re.fullmatch(
+            r"n(\d+|all)_rep(\d+)",
+            run_folder.name,
+        )
+
+        if match is None:
+            continue
+
+        num_subjects = (
+            match.group(1)
+        )
+
+        rep = int(
+            match.group(2)
+        )
+
+        try:
+            row = evaluate_autoencoder_folder(
+                run_folder=run_folder,
+                num_subjects=num_subjects,
+                rep=rep,
+                n_perm=n_perm,
+            )
+
+            rows.append(
+                row
+            )
+
+        except FileNotFoundError as exc:
+            print(
+                f"Skipping {run_folder}: "
+                f"{exc}"
+            )
+
+    if not rows:
+        raise ValueError(
+            "No valid autoencoder trait "
+            "embedding folders were found."
+        )
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+# ============================================================
+# Existing non-autoencoder hierarchy
+# ============================================================
+
 def evaluate_embedding_file(
     embedding_file: Path,
     n_perm: int,
 ) -> list[dict]:
+    """
+    Calculate hierarchy on TEST embeddings stored
+    in one traditional embeddings.pkl bundle.
+    """
 
-    Calculate hierarchy metrics on the TEST embeddings
-    stored in one embeddings.pkl file.
+    bundle = joblib.load(
+        embedding_file
+    )
 
-
-    bundle = joblib.load(embedding_file)
-
-    # These are already the metadata rows corresponding
-    # to X_test.
     test_labels = (
         bundle["test_metadata"][
             ["subject", "condition"]
         ]
+        .copy()
         .reset_index(drop=True)
     )
 
     rows = []
 
-    for space_name, space_data in bundle["spaces"].items():
+    for (
+        space_name,
+        space_data,
+    ) in bundle["spaces"].items():
 
-        # These are already the TEST embeddings.
-        X_test = space_data["X_test"]
+        X_test = (
+            space_data["X_test"]
+        )
 
-        if len(X_test) != len(test_labels):
+        if len(X_test) != len(
+            test_labels
+        ):
             raise ValueError(
-                f"Embedding/metadata mismatch in {embedding_file}: "
-                f"{len(X_test)} embeddings vs "
-                f"{len(test_labels)} metadata rows."
+                f"Embedding/metadata mismatch "
+                f"in {embedding_file}: "
+                f"{len(X_test)} vs "
+                f"{len(test_labels)}"
             )
 
         metric = HierarchyMetric(
@@ -57,123 +265,204 @@ def evaluate_embedding_file(
         )
 
         rows.append({
-            "num_subjects": bundle["subject_group"],
+            "num_subjects": (
+                bundle["subject_group"]
+            ),
             "seed": bundle["seed"],
-            "split_type": bundle["split_type"],
-            "target_subject": bundle["target_subject"],
+            "split_type": "trait",
             "space": space_name,
             "hier_ratio": result["ratio"],
             "inter": result["inter"],
             "intra": result["intra"],
-            "hier_pval": result["p_value"],
+            "hier_pval": (
+                result["p_value"]
+            ),
         })
 
     return rows
 
-"""
 
-def evaluate_seed_folder(
-    embedding_files: list[Path],
+def evaluate_standard_embeddings(
+    experiment: dict,
     n_perm: int,
-) -> list[dict]:
+) -> pd.DataFrame:
+    """
+    Existing representation pipeline:
 
-    bundles = [
-        joblib.load(file)
-        for file in embedding_files
-    ]
+    save_dir/
+        embeddings/
+            trait/
+                n4_seed0/
+                    embeddings.pkl
+    """
 
-    first_bundle = bundles[0]
+    trait_dir = (
+        experiment["save_dir"]
+        / "embeddings"
+        / "trait"
+    )
+
+    if not trait_dir.exists():
+        raise FileNotFoundError(
+            f"Trait embedding directory "
+            f"not found: {trait_dir}"
+        )
 
     rows = []
 
-    space_names = first_bundle["spaces"].keys()
+    for seed_folder in sorted(
+        trait_dir.iterdir()
+    ):
+        if not seed_folder.is_dir():
+            continue
 
-    for space_name in space_names:
-
-        X_parts = []
-        metadata_parts = []
-
-        for bundle in bundles:
-
-            X_test = bundle["spaces"][space_name]["X_test"]
-            test_metadata = (
-                bundle["test_metadata"][
-                    ["subject", "condition"]
-                ]
-                .copy()
-                .reset_index(drop=True)
-            )
-
-            if len(X_test) != len(test_metadata):
-                raise ValueError(
-                    "Embedding/metadata mismatch: "
-                    f"{len(X_test)} embeddings vs "
-                    f"{len(test_metadata)} metadata rows."
-                )
-
-            X_parts.append(X_test)
-            metadata_parts.append(test_metadata)
-
-        X = np.concatenate(
-            X_parts,
-            axis=0,
+        match = re.fullmatch(
+            r"n(\d+|all)_seed(\d+)",
+            seed_folder.name,
         )
 
-        labels = pd.concat(
-            metadata_parts,
-            ignore_index=True,
+        if match is None:
+            continue
+
+        embedding_file = (
+            seed_folder
+            / "embeddings.pkl"
+        )
+
+        if not embedding_file.exists():
+            print(
+                f"Missing: {embedding_file}"
+            )
+            continue
+
+        rows.extend(
+            evaluate_embedding_file(
+                embedding_file,
+                n_perm,
+            )
+        )
+
+    if not rows:
+        raise ValueError(
+            "No valid trait embeddings found."
+        )
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+# ============================================================
+# Save hierarchy results
+# ============================================================
+
+def save_results(
+    results: pd.DataFrame,
+    experiment: dict,
+) -> None:
+
+    if experiment["feature"] == "autoencoder":
+        output_dir = (
+            experiment["save_dir"]
+            / "autoencoder"
+            / "hierarchy"
+            / "trait"
+        )
+    else:
+        output_dir = (
+            experiment["save_dir"]
+            / "hierarchy"
+            / "trait"
+        )
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    all_results_file = (
+        output_dir
+        / "hierarchy_all_seeds.csv"
+    )
+
+    results.to_csv(
+        all_results_file,
+        index=False,
+    )
+
+    print(
+        f"\nSaved {all_results_file}"
+    )
+
+    for (
+        subject_group,
+        group,
+    ) in results.groupby(
+        "num_subjects"
+    ):
+
+        summary = (
+            group
+            .groupby("space")
+            .agg({
+                "hier_ratio": [
+                    "mean",
+                    "std",
+                ],
+                "inter": [
+                    "mean",
+                    "std",
+                ],
+                "intra": [
+                    "mean",
+                    "std",
+                ],
+                "hier_pval": [
+                    "mean",
+                    "std",
+                ],
+            })
+        )
+
+        filename = (
+            f"hierarchy_results_"
+            f"n{subject_group}_"
+            f"{experiment['num_classes']}"
+            f"classes_"
+            f"{experiment['feature']}"
+            f".csv"
+        )
+
+        output_file = (
+            output_dir
+            / filename
+        )
+
+        summary.to_csv(
+            output_file
         )
 
         print(
-            f"n={first_bundle['subject_group']}, "
-            f"seed={first_bundle['seed']}, "
-            f"space={space_name}, "
-            f"samples={len(X)}, "
-            f"subjects={labels['subject'].nunique()}, "
-            f"conditions={labels['condition'].nunique()}"
+            f"Saved {output_file}"
         )
 
-        metric = HierarchyMetric(
-            X,
-            labels,
-        )
 
-        result = metric.evaluate(
-            n_perm=n_perm,
-        )
-
-        rows.append({
-            "num_subjects": first_bundle["subject_group"],
-            "seed": first_bundle["seed"],
-            "split_type": first_bundle["split_type"],
-            "space": space_name,
-            "hier_ratio": result["ratio"],
-            "inter": result["inter"],
-            "intra": result["intra"],
-            "hier_pval": result["p_value"],
-        })
-
-    return rows
-
+# ============================================================
+# Main
+# ============================================================
 
 def main() -> None:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Calculate hierarchy metrics "
-            "from saved test embeddings."
+            "Calculate trait hierarchy metrics "
+            "from held-out test embeddings."
         )
     )
 
     parser.add_argument(
         "--config",
         default="config.yaml",
-    )
-
-    parser.add_argument(
-        "--n_jobs",
-        type=int,
-        default=8,
     )
 
     parser.add_argument(
@@ -184,263 +473,48 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    experiment = load_experiment_config(
-        args.config
+    experiment = (
+        load_experiment_config(
+            args.config
+        )
     )
 
-    embedding_dir = (
-        experiment["save_dir"]
-        / "embeddings"
+    feature = str(
+        experiment["feature"]
+    ).lower()
+
+    print(
+        f"Feature: {feature}"
     )
 
-    output_dir = (
-        experiment["save_dir"]
-        / "hierarchy"
+    # --------------------------------------------------------
+    # Autoencoder representation
+    # --------------------------------------------------------
+
+    if feature == "autoencoder":
+
+        results = evaluate_autoencoder(
+            experiment=experiment,
+            n_perm=args.n_perm,
+        )
+
+    # --------------------------------------------------------
+    # PSD / entropy / complexity / etc.
+    # --------------------------------------------------------
+
+    else:
+
+        results = (
+            evaluate_standard_embeddings(
+                experiment=experiment,
+                n_perm=args.n_perm,
+            )
+        )
+
+    save_results(
+        results=results,
+        experiment=experiment,
     )
-
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    # --------------------------------------------------
-    # embeddings/
-    #
-    #   trait/
-    #       n4_seed0/
-    #           embeddings.pkl
-    #
-    #   within_state/
-    #       n4_seed0/
-    #           subject_S001/
-    #               embeddings.pkl
-    #
-    #   between_state/
-    #       n4_seed0/
-    #           subject_S001/
-    #               embeddings.pkl
-    # --------------------------------------------------
-
-    for split_dir in sorted(
-        embedding_dir.iterdir()
-    ):
-
-        if not split_dir.is_dir():
-            continue
-
-        split_type = split_dir.name
-
-        if split_type not in {
-            "trait",
-            "within_state",
-            "between_state",
-        }:
-            continue
-
-        print(
-            f"\nProcessing split: {split_type}"
-        )
-
-        split_output_dir = (
-            output_dir
-            / split_type
-        )
-
-        split_output_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        all_rows = []
-
-        # ----------------------------------------------
-        # Example:
-        #
-        # n4_seed0
-        # n4_seed1
-        # n10_seed0
-        # n10_seed1
-        # ----------------------------------------------
-
-        for seed_folder in sorted(
-            split_dir.iterdir()
-        ):
-
-            if not seed_folder.is_dir():
-                continue
-
-            match = re.fullmatch(
-                r"n(\d+|all)_seed(\d+)",
-                seed_folder.name,
-            )
-
-            if match is None:
-                continue
-
-            num_subjects = match.group(1)
-            seed = int(match.group(2))
-
-            print(
-                f"  n={num_subjects}, "
-                f"seed={seed}"
-            )
-
-            # ------------------------------------------
-            # Trait has:
-            #
-            # n4_seed0/
-            #     embeddings.pkl
-            #
-            # because target_subject=None
-            # ------------------------------------------
-
-            if split_type == "trait":
-
-                embedding_file = (
-                    seed_folder
-                    / "embeddings.pkl"
-                )
-
-                if not embedding_file.exists():
-                    print(
-                        f"    Missing: "
-                        f"{embedding_file}"
-                    )
-                    continue
-
-                embedding_files = [
-                    embedding_file
-                ]
-
-            # ------------------------------------------
-            # within_state / between_state have:
-            #
-            # n4_seed0/
-            #     subject_S001/
-            #         embeddings.pkl
-            #     subject_S002/
-            #         embeddings.pkl
-            # ------------------------------------------
-
-            else:
-
-                embedding_files = sorted(
-                    seed_folder.glob(
-                        "subject_*/embeddings.pkl"
-                    )
-                )
-
-                if not embedding_files:
-                    print(
-                        f"    No subject embeddings "
-                        f"found in {seed_folder}"
-                    )
-                    continue
-
-            print(
-                f"    Found "
-                f"{len(embedding_files)} "
-                f"embedding file(s)"
-            )
-
-            # Evaluate files in this seed in parallel.
-            rows = evaluate_seed_folder(
-                embedding_files,
-                args.n_perm,
-            )
-
-            all_rows.extend(rows)
-
-        if not all_rows:
-
-            print(
-                f"No valid embeddings found "
-                f"for {split_type}."
-            )
-
-            continue
-
-        results = pd.DataFrame(
-            all_rows
-        )
-
-        # ----------------------------------------------
-        # Save every individual result.
-        # ----------------------------------------------
-
-        all_results_file = (
-            split_output_dir
-            / "hierarchy_all_seeds.csv"
-        )
-
-        results.to_csv(
-            all_results_file,
-            index=False,
-        )
-
-        print(
-            f"Saved {all_results_file}"
-        )
-
-        # ----------------------------------------------
-        # Aggregate by subject-group size.
-        #
-        # n4 results together
-        # n10 results together
-        # n20 results together
-        # etc.
-        # ----------------------------------------------
-
-        for subject_group, group in (
-            results.groupby(
-                "num_subjects"
-            )
-        ):
-
-            summary = (
-                group
-                .groupby("space")
-                .agg({
-                    "hier_ratio": [
-                        "mean",
-                        "std",
-                    ],
-                    "inter": [
-                        "mean",
-                        "std",
-                    ],
-                    "intra": [
-                        "mean",
-                        "std",
-                    ],
-                    "hier_pval": [
-                        "mean",
-                        "std",
-                    ],
-                })
-            )
-
-            filename = (
-                f"hierarchy_results_"
-                f"n{subject_group}_"
-                f"{experiment['num_classes']}"
-                f"classes_"
-                f"{experiment['feature']}"
-                f".csv"
-            )
-
-            output_file = (
-                split_output_dir
-                / filename
-            )
-
-            summary.to_csv(
-                output_file
-            )
-
-            print(
-                f"Saved {output_file}"
-            )
 
 
 if __name__ == "__main__":

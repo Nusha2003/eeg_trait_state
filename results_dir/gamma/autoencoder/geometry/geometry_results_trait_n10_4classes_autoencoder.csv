@@ -1,0 +1,4 @@
+,Bal_Acc,Bal_Acc,F1,F1,Kappa,Kappa
+,mean,std,mean,std,mean,std
+space,,,,,,
+autoencoder,0.70975,0.0354512086457492,0.7041747787125521,0.03758679809094144,0.6775,0.039390231828610275

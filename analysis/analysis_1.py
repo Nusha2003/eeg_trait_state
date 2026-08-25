@@ -13,10 +13,17 @@ sns.set_theme(style="whitegrid")
 
 def parse_n_subjects_from_filename(path):
     fname = os.path.basename(path)
-    m = re.search(r"_n(\d+|all)\b", fname)
+
+    m = re.search(
+        r"_n(\d+|all)(?=_|\.|$)",
+        fname
+    )
+
     if not m:
         return None
+
     val = m.group(1)
+
     return "all" if val == "all" else int(val)
 
 
@@ -34,8 +41,8 @@ def infer_dataset_feature(path):
     dataset = "unknown_dataset"
     feature = "unknown_feature"
 
-    known_datasets = {"motor", "lee", "lemon", "gamma", "bci"}
-    known_features = {"psd", "entropy", "complexity"}
+    known_datasets = {"motor", "lee", "lemon", "gamma", "bci", "ern"}
+    known_features = {"psd", "entropy", "complexity", "autoencoder"}
 
     for p in parts:
         p_low = p.lower()
@@ -85,83 +92,60 @@ def normalize_loaded_columns(df):
 
 def load_hierarchy_csv(csv_path):
     try:
-        df = pd.read_csv(csv_path, header=[0, 1], skiprows=[2])
+        df = pd.read_csv(
+            csv_path,
+            header=[0, 1],
+            index_col=0,
+        )
     except Exception as e:
-        print(f"Skipping {csv_path}: failed to read with 2-row header: {e}")
+        print(f"Skipping {csv_path}: failed to read: {e}")
         return None
-    df = flatten_multilevel_columns(df)
-    df["space"] = df["space"].replace({
-        "Raw": "Unsupervised"
-    })
 
-    rename_map = {
-        "hier_ratio_mean": "mean_hierarchy",
-        "hier_ratio_std": "std_hierarchy",
-        "inter_mean": "mean_inter",
-        "inter_std": "std_inter",
-        "intra_mean": "mean_intra",
-        "intra_std": "std_intra",
-        "hier_pval_mean": "mean_pval",
-        "hier_pval_std": "std_pval",
-    }
-    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    df.index.name = "space"
+    df = df.reset_index()
 
-    required_cols = {"num_subjects", "space", "mean_hierarchy"}
-    missing = required_cols - set(df.columns)
-    if missing:
-        print(f"Skipping {csv_path}: missing required columns {missing}")
-        print("Columns found:", df.columns.tolist())
-        return None
+    df.columns = [
+        "space",
+        "mean_hierarchy",
+        "std_hierarchy",
+        "mean_inter",
+        "std_inter",
+        "mean_intra",
+        "std_intra",
+        "mean_pval",
+        "std_pval",
+    ]
 
     dataset, feature = infer_dataset_feature(csv_path)
     num_classes = parse_num_classes(csv_path)
-    n_from_fname = parse_n_subjects_from_filename(csv_path)
+    n_subjects = parse_n_subjects_from_filename(csv_path)
 
-    df = df.copy()
     df["dataset"] = dataset
     df["feature"] = feature
     df["num_classes"] = num_classes
+    df["n_subjects"] = n_subjects
     df["source_file"] = csv_path
 
-    def parse_subject_value(x):
-        if pd.isna(x):
-            return n_from_fname
-
-        x_str = str(x).strip().lower()
-        if x_str in {"all", "nall"}:
-            return "all"
-
-        try:
-            return int(float(x))
-        except Exception:
-            return n_from_fname
-
-    df["n_subjects"] = df["num_subjects"].apply(parse_subject_value)
+    df["space"] = df["space"].replace({
+        "Raw": "Unsupervised",
+    })
 
     numeric_cols = [
-        "mean_hierarchy", "std_hierarchy",
-        "mean_inter", "std_inter",
-        "mean_intra", "std_intra",
-        "mean_pval", "std_pval"
+        "mean_hierarchy",
+        "std_hierarchy",
+        "mean_inter",
+        "std_inter",
+        "mean_intra",
+        "std_intra",
+        "mean_pval",
+        "std_pval",
     ]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    if "std_hierarchy" not in df.columns:
-        df["std_hierarchy"] = 0.0
-    if "mean_inter" not in df.columns:
-        df["mean_inter"] = np.nan
-    if "std_inter" not in df.columns:
-        df["std_inter"] = np.nan
-    if "mean_intra" not in df.columns:
-        df["mean_intra"] = np.nan
-    if "std_intra" not in df.columns:
-        df["std_intra"] = np.nan
-    if "mean_pval" not in df.columns:
-        df["mean_pval"] = np.nan
-    if "std_pval" not in df.columns:
-        df["std_pval"] = np.nan
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce",
+        )
 
     return df
 
@@ -171,10 +155,23 @@ def collect_all_hierarchy_results(results_dir, dataset):
     pattern = os.path.join(dataset_dir, "**", "*.csv")
     files = glob.glob(pattern, recursive=True)
 
-    hierarchy_files = [f for f in files if "hierarchy" in f.lower()]
+    # Only load per-subject-count hierarchy summary files.
+    # This includes standard features such as:
+    #   gamma/complexity/hierarchy/trait/hierarchy_results_n4_...
+    # and autoencoder summaries such as:
+    #   gamma/autoencoder/hierarchy/trait/hierarchy_results_n4_...
+    #
+    # Skip hierarchy_all_seeds.csv because it has a different flat format.
+    hierarchy_files = [
+        f
+        for f in files
+        if os.path.basename(f).startswith("hierarchy_results_")
+    ]
 
     if not hierarchy_files:
-        raise FileNotFoundError(f"No hierarchy CSV files found under {dataset_dir}")
+        raise FileNotFoundError(
+            f"No hierarchy_results_*.csv files found under {dataset_dir}"
+        )
 
     dfs = []
     for f in hierarchy_files:
@@ -266,7 +263,7 @@ def get_space_order(values):
 
 
 def get_feature_order(values):
-    preferred = ["psd", "entropy", "complexity"]
+    preferred = ["psd", "entropy", "complexity", "autoencoder"]
     existing = [v for v in preferred if v in values]
     remaining = [v for v in sorted(values) if v not in existing]
     return existing + remaining
@@ -355,6 +352,232 @@ def plot_dataset_bars_by_space(summary_df, dataset, out_dir, num_classes=None):
     fig.savefig(out_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {out_path}")
+
+
+
+def plot_all_features_by_subject_count(
+    summary_df,
+    dataset,
+    out_dir,
+    num_classes=None,
+):
+    """
+    One combined figure with one panel per feature.
+
+    x-axis:
+        number of subjects
+
+    y-axis:
+        hierarchy ratio
+
+    bars:
+        representation spaces
+    """
+
+    ds = summary_df[
+        summary_df["dataset"] == dataset
+    ].copy()
+
+    if num_classes is not None:
+        ds = ds[
+            ds["num_classes"] == num_classes
+        ].copy()
+
+    if ds.empty:
+        return
+
+    features = get_feature_order(
+        ds["feature"].dropna().unique()
+    )
+
+    n_features = len(features)
+    ncols = 2
+    nrows = math.ceil(n_features / ncols)
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(7 * ncols, 5 * nrows),
+        squeeze=False,
+        sharey=True,
+    )
+
+    axes = axes.flatten()
+
+    for ax_idx, feature in enumerate(features):
+
+        ax = axes[ax_idx]
+
+        feature_df = ds[
+            ds["feature"] == feature
+        ].copy()
+
+        # -----------------------------
+        # Subject count order
+        # -----------------------------
+        subject_order_df = (
+            feature_df[
+                [
+                    "n_subjects_plot",
+                    "n_subjects_label",
+                ]
+            ]
+            .drop_duplicates()
+            .sort_values("n_subjects_plot")
+        )
+
+        subject_labels = (
+            subject_order_df[
+                "n_subjects_label"
+            ].tolist()
+        )
+
+        x = np.arange(
+            len(subject_labels)
+        )
+
+        # -----------------------------
+        # Representation spaces
+        # -----------------------------
+        spaces = get_space_order(
+            feature_df[
+                "space"
+            ].dropna().unique()
+        )
+
+        total_width = 0.8
+        bar_width = (
+            total_width / max(len(spaces), 1)
+        )
+
+        # -----------------------------
+        # Plot grouped bars
+        # -----------------------------
+        for space_idx, space in enumerate(spaces):
+
+            space_df = feature_df[
+                feature_df["space"] == space
+            ].copy()
+
+            space_df = (
+                space_df
+                .set_index("n_subjects_label")
+                .reindex(subject_labels)
+                .reset_index()
+            )
+
+            y = space_df[
+                "mean_hierarchy"
+            ].to_numpy(dtype=float)
+
+            yerr = space_df[
+                "sem_hierarchy"
+            ].fillna(0.0).to_numpy(dtype=float)
+
+            offset = (
+                space_idx
+                - (len(spaces) - 1) / 2
+            ) * bar_width
+
+            mask = ~np.isnan(y)
+
+            ax.bar(
+                x[mask] + offset,
+                y[mask],
+                width=bar_width,
+                yerr=yerr[mask],
+                capsize=3,
+                label=space,
+                alpha=0.9,
+            )
+
+        # -----------------------------
+        # Formatting
+        # -----------------------------
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            subject_labels
+        )
+
+        ax.set_title(
+            feature.upper()
+            if feature != "autoencoder"
+            else "Autoencoder"
+        )
+
+        ax.set_xlabel(
+            "Number of Subjects"
+        )
+
+        ax.set_ylabel(
+            "Hierarchy Ratio"
+        )
+
+        ax.axhline(
+            1.0,
+            linestyle="--",
+            linewidth=1,
+            alpha=0.6,
+        )
+
+        handles, labels = (
+            ax.get_legend_handles_labels()
+        )
+
+        if handles:
+            ax.legend(
+                fontsize=9
+            )
+
+    # Remove unused panels
+    for j in range(
+        n_features,
+        len(axes),
+    ):
+        fig.delaxes(
+            axes[j]
+        )
+
+    title = (
+        f"Trait Hierarchy — {dataset.capitalize()}"
+    )
+
+    if num_classes is not None:
+        title += (
+            f" ({int(num_classes)} classes)"
+        )
+
+    fig.suptitle(
+        title,
+        fontsize=16,
+        y=1.02,
+    )
+
+    fig.tight_layout()
+
+    suffix = (
+        f"_{int(num_classes)}classes"
+        if num_classes is not None
+        else ""
+    )
+
+    out_path = os.path.join(
+        out_dir,
+        f"{dataset}{suffix}_hierarchy_all_features_bars.png",
+    )
+
+    fig.savefig(
+        out_path,
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
+
+    print(
+        f"Saved {out_path}"
+    )
+
 
 
 def plot_dataset_feature_bars(summary_df, dataset, feature, out_dir, num_classes=None):
@@ -526,9 +749,9 @@ def plot_inter_intra_bars_per_feature(summary_df, dataset, feature, out_dir, num
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--results_dir", type=str, required=True)
+    parser.add_argument("--results_dir", default="/home1/amadapur/projects/eeg_trait_state_geometry/results_dir", type=str)
     parser.add_argument("--dataset", type=str, required=True, choices=["motor", "lee", "lemon", "gamma", "bci"])
-    parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--out_dir", default="/home1/amadapur/projects/eeg_trait_state_geometry/plots", type=str)
     parser.add_argument("--plot_feature_level", action="store_true")
     parser.add_argument("--plot_inter_intra", action="store_true")
     args = parser.parse_args()
@@ -551,29 +774,54 @@ def main():
     class_values = sorted(summary_df["num_classes"].dropna().unique())
 
     if len(class_values) == 0:
+        print("Plotting combined all-feature hierarchy figure...")
+        plot_all_features_by_subject_count(
+            summary_df,
+            args.dataset,
+            args.out_dir,
+        )
+
         print("Plotting main bars...")
-        plot_dataset_bars_by_space(summary_df, args.dataset, args.out_dir)
+        plot_dataset_bars_by_space(
+            summary_df,
+            args.dataset,
+            args.out_dir,
+        )
         if args.plot_feature_level:
             for feature in sorted(summary_df["feature"].dropna().unique()):
                 print(f"Plotting feature bars for {feature}...")
                 plot_dataset_feature_bars(summary_df, args.dataset, feature, args.out_dir)
         if args.plot_inter_intra:
             print("Plotting inter/intra bars...")
-            for feature in sorted(class_summary["feature"].dropna().unique()):
-                    plot_inter_intra_bars_per_feature(
-                        class_summary,
-                        args.dataset,
-                        feature,
-                        args.out_dir,
-                        num_classes=num_classes
-                    )
+            for feature in sorted(
+                summary_df["feature"].dropna().unique()
+            ):
+                plot_inter_intra_bars_per_feature(
+                    summary_df,
+                    args.dataset,
+                    feature,
+                    args.out_dir,
+                )
     else:
         for num_classes in class_values:
             class_summary = summary_df[summary_df["num_classes"] == num_classes].copy()
             if class_summary.empty:
                 continue
+            print("Plotting combined all-feature hierarchy figure...")
+            plot_all_features_by_subject_count(
+                class_summary,
+                args.dataset,
+                args.out_dir,
+                num_classes=num_classes,
+            )
+
             print("Plotting main bars...")
-            plot_dataset_bars_by_space(class_summary, args.dataset, args.out_dir, num_classes=num_classes)
+            plot_dataset_bars_by_space(
+                class_summary,
+                args.dataset,
+                args.out_dir,
+                num_classes=num_classes,
+            )
 
             if args.plot_feature_level:
                 for feature in sorted(class_summary["feature"].dropna().unique()):

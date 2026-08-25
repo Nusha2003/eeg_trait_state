@@ -406,7 +406,7 @@ def preprocess_gamma_file(
         )
     ):
         data = mne.filter.resample(
-            data,
+            data.astype(np.float64),
             up=float(target_sfreq),
             down=original_sfreq,
             axis=-1,

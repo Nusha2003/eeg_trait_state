@@ -1,5 +1,6 @@
 {
   "model_type": "eegnet_ae",
+
   "model_params": {
     "sampling_rate": 160,
     "n_seconds_input": 5,
@@ -7,9 +8,12 @@
     "mode": "reconstruction",
     "p_dropout": 0.25
   },
+
   "trainer_args": {
-    "save_n_iters": 500,
-    "early_stop_patience": 10,
+    "save_n_iters": 100,
+    "early_stop_patience": 5,
+    "min_delta": 1e-5,
+
     "optimizer_args": {
       "type": "adamw",
       "params": {
@@ -17,15 +21,17 @@
         "weight_decay": 0.01
       }
     },
+
     "scheduler_args": {
       "type": "cosineAnnealLR",
       "params": {
-        "T_max": 5000,
+        "T_max": 1500,
         "eta_min": 1e-6
       }
     }
   },
+
   "train_fn_args": {
-    "n_iters": 5000
+    "n_iters": 1500
   }
 }

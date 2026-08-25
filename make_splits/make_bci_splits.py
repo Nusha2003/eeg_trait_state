@@ -119,7 +119,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--train_frac",
         type=float,
-        default=0.8
+        default=0.7
     )
 
     args = parser.parse_args()

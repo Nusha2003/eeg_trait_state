@@ -24,7 +24,6 @@ from sklearn.svm import LinearSVC
 
 DEFAULT_SPACES = ["Raw", "Trait_LDA", "State_LDA", "Joint_LDA"]
 
-
 def load_experiment_config(config_path: str | os.PathLike[str]) -> dict[str, Any]:
     """Load the global dataset/feature selection and resolve dataset paths."""
     with open(config_path, "r") as f:
@@ -38,27 +37,42 @@ def load_experiment_config(config_path: str | os.PathLike[str]) -> dict[str, Any
     if dataset == "motor":
         if num_classes not in {6, 10}:
             raise ValueError("Motor classes must be 6 or 10.")
+
         split_dir = Path(data_cfg[f"{num_classes}split_dir"])
-        save_dir = Path(data_cfg[f"save_dir_{num_classes}"])
+        base_save_dir = Path(data_cfg[f"save_dir_{num_classes}"])
+
     else:
         split_dir = Path(data_cfg["split_dir"])
-        save_dir = Path(data_cfg["save_dir"])
+        base_save_dir = Path(data_cfg["save_dir"])
 
-    feature_path = Path(data_cfg[feature])
-    spaces = config.get("experiment", {}).get("spaces", DEFAULT_SPACES)
+    # Autoencoder embeddings are generated outputs,
+    # not an input feature file in config.yaml.
+    if feature == "autoencoder":
+        feature_path = None
+        save_dir = base_save_dir
+    else:
+        feature_path = Path(data_cfg[feature])
+        save_dir = base_save_dir / feature
+
+    spaces = config.get(
+        "experiment",
+        {}
+    ).get(
+        "spaces",
+        DEFAULT_SPACES,
+    )
 
     return {
         "dataset": dataset,
         "feature": feature,
         "num_classes": num_classes,
         "split_dir": split_dir,
-        "save_dir": save_dir / feature,
+        "save_dir": save_dir,
         "feature_path": feature_path,
         "spaces": spaces,
         "raw_config": config,
         "data_config": data_cfg,
     }
-
 
 def parse_subject_group(filename: str) -> str | None:
     """Extract n-subject group from names such as splits_n4_rep0.pkl or splits_all.pkl."""
