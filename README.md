@@ -1,7 +1,11 @@
-This repository contains the analysis pipeline for studying the organization of trait-state-related variability in EEG representations. 
+# EEG Trait-State Geometry
 
-## Datasets 
+This repository contains the analysis pipeline for studying the organization of trait-state-related variability in EEG representations.
+
+## Datasets
+
 The analysis currently includes four EEG datasets spanning motor and non-motor paradigms.
+
 | Dataset | Paradigm |
 |---|---|
 | PhysioNet EEG Motor Movement/Imagery | Executed and imagined motor tasks |
@@ -10,48 +14,68 @@ The analysis currently includes four EEG datasets spanning motor and non-motor p
 | ERPCore ERN | Error-related potentials |
 
 ## EEG Features
-To create features from raw datasets, run:
-''' bash
-python datasets/make_[DATASET_NAME].py --feature=[FEATURE_NAME]
-'''
 
-## Generate Data Splits 
-Generate dataset-specific train/test splits:
-''' bash 
-python dataset/make_[DATASET]_splits.py --labels=[LABELS_PATH] --out_dir=[PATH TO OUT DIR] 
+To extract features from the raw EEG datasets, run:
 
-## Config File
-Make sure to modify the config file settings for each dataset. Finally, when running experiments, all you have to do is change the "dataset" and "feature" fields at the top, (and "num_classes" for motor) 
+```bash
+python datasets/make_[DATASET_NAME].py --feature [FEATURE_NAME]
+```
+
+For example:
+
+```bash
+python datasets/make_motor.py --feature psd
+```
+
+## Generate Data Splits
+
+Generate the dataset-specific train/test splits using:
+
+```bash
+python datasets/make_[DATASET_NAME]_splits.py \
+    --labels [LABELS_PATH] \
+    --out_dir [OUTPUT_DIR]
+```
+
+## Configuration
+
+Experiment settings are specified in `config.yaml`. Before running an experiment, set the appropriate `dataset` and `feature` fields. For the PhysioNet Motor Movement/Imagery dataset, also specify `num_classes`.
 
 ## Create Representation Embeddings
 
-Generate Trait-LDA, State-LDA, and Joint-LDA representations using the experiment configuration:
+Generate the Trait-LDA, State-LDA, and Joint-LDA representations using:
 
-''bash
+```bash
 python create_embeddings.py \
-       --config config.yaml
-       --n_jobs 8
-'''
+    --config config.yaml \
+    --n_jobs 8
+```
 
 ## Evaluate Trait-State Hierarchy
-Computes the trait-state hierarchy on held-out representations
 
-'''bash
-python calculate_hierarchy.py 
+Compute the trait-state hierarchy on the held-out representations:
 
-### Run Decoding
+```bash
+python calculate_hierarchy.py
+```
+
+## Run Decoding
+
 Run trait, within-subject state, and between-subject state decoding:
 
-'''bash 
+```bash
 python decoding.py \
-      --config config.yaml
-'''
+    --config config.yaml
+```
 
 ## Train Autoencoder Representations
 
-Autoencoder experiments are submitted through autoencoder/array.sh by specifying the runs, subject counts, and dataset.
-You can modify the specific parameters for each job in ae.sh
+Autoencoder experiments are submitted through `autoencoder/array.sh`. The dataset, subject counts, and repetitions to run can be specified in the array submission script.
 
-'''bash
+Job-specific training parameters can be modified in `autoencoder/ae.sh`.
+
+Submit the experiments using:
+
+```bash
 sbatch autoencoder/array.sh
-'''
+```
